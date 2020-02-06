@@ -231,7 +231,7 @@ topologika_run(struct thread_context *contexts, int64_t thread_count, int64_t wo
 #include <time.h>
 #include <unistd.h>
 
-#define TOPOLOGIKA_ALWAYS_INLINE __attribute__((always_inline))
+#define TOPOLOGIKA_ALWAYS_INLINE inline __attribute__((always_inline))
 
 // TODO: do we need volatile?
 int64_t
@@ -297,7 +297,7 @@ topologika_run(struct thread_context *contexts, int64_t thread_count, int64_t wo
 #include <time.h>
 #include <unistd.h>
 
-#define TOPOLOGIKA_ALWAYS_INLINE __attribute__((always_inline))
+#define TOPOLOGIKA_ALWAYS_INLINE inline __attribute__((always_inline))
 
 // TODO: do we need volatile?
 int64_t
