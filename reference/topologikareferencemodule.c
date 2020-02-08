@@ -125,6 +125,7 @@ TopologikaReferenceMergeForest_query_component(TopologikaReferenceMergeForestObj
 		Py_RETURN_NONE;
 	}
 
+	// TODO(2/8/2020): the Python's list has large overhead per element, use numpy array
 	PyObject *list = PyList_New(component_count);
 	for (int64_t i = 0; i < component_count; i++) {
 		PyList_SetItem(list, i, PyLong_FromLongLong(component[i]));

@@ -7,10 +7,11 @@ import unittest
 
 
 class TestRandom(unittest.TestCase):
-    def setUp(self):
-        self.data = np.random.rand(128, 128, 128).astype(np.float32) # assumes region size 64^3
-        self.forest = topologika.MergeForest(self.data)
-        self.forest_reference = topologika_reference.MergeForest(self.data)
+    @classmethod
+    def setUpClass(cls):
+        cls.data = np.random.rand(128, 128, 128).astype(np.float32) # assumes region size 64^3
+        cls.forest = topologika.MergeForest(cls.data)
+        cls.forest_reference = topologika_reference.MergeForest(cls.data)
 
 
     def test_maxima_query(self):

@@ -115,6 +115,9 @@ topologika_reference_query_component(data_t const *data, int64_t const *data_dim
 		}
 	}
 
+	free(visited);
+	free(todo);
+
 	*out_vertices = vertices;
 	*out_vertex_count = vertex_count;
 }

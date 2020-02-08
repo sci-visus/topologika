@@ -240,6 +240,7 @@ TopologikaMergeForest_query_component(TopologikaMergeForestObject *self, PyObjec
 	}
 
 	// convert to global coordinates and Python list
+	// TODO(2/8/2020): the Python's list has large overhead per element, use numpy array or generator
 	PyObject *list = PyList_New(component->count);
 	for (int64_t i = 0; i < component->count; i++) {
 		int64_t global_vertex_index = topologika_vertex_to_global_index(self->dims, self->domain, component->data[i]);

@@ -1679,7 +1679,6 @@ topologika_compute_merge_forest_from_grid(topologika_data_t const *data, int64_t
 	}
 	assert(region_index == region_count);
 
-
 	int64_t event_capacity = 128*region_count;
 	if (record_events) {
 		events = malloc(sizeof *events + event_capacity*sizeof *events->data);
@@ -2347,16 +2346,14 @@ topologika_global_index_to_vertex(int64_t const *dims, struct topologika_domain 
 		global_vertex_index/(dims[0]*dims[1]),
 	};
 
-	struct topologika_vertex vertex = {0};
-
 	int64_t region_index = (global_position[0]/region_dims[0]) +
 		(global_position[1]/region_dims[1])*domain->dims[0] +
 		(global_position[2]/region_dims[2])*domain->dims[0]*domain->dims[1];
 
-	struct region const *region = &domain->regions[vertex.region_index];
+	struct region const *region = &domain->regions[region_index];
 	int64_t vertex_index = (global_position[0]%region_dims[0]) +
 		(global_position[1]%region_dims[1])*region->dims[0] +
-		(global_position[2]%region_dims[2])*region->dims[1]*region->dims[2];
+		(global_position[2]%region_dims[2])*region->dims[0]*region->dims[1];
 
 	assert(region_index < TOPOLOGIKA_LOCAL_MAX && vertex_index < TOPOLOGIKA_LOCAL_MAX);
 	return (struct topologika_vertex){
