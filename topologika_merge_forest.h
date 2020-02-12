@@ -45,7 +45,6 @@ Changes from the VIS code:
 // TODO(11/25/2019): store arc_id in the bridge set? (maybe even the function value so we do not need
 //	the domain for traversal)
 // TODO(11/19/2019): allow to save simplified field?
-// TODO(11/19/2019): dump trees and reduced bridge sets as JSON for testing and debugging
 // TODO(11/15/2019): absan, ubsan, afl
 // TODO(11/8/2019): when an out-of-memory error ocurrs, alongside the error report a lower bound on how much memory
 //	would be required to build the merge forest or run the query
@@ -280,7 +279,7 @@ topologika_run(struct thread_context *contexts, int64_t thread_count, int64_t wo
 			topologika_thread_func(&contexts[i]);
 		} else {
 			int ret = pthread_create(&handles[i], NULL, topologika_thread_func, &contexts[i]);
-			assert(ret == 0);
+			assert(ret == 0); // TODO: return error
 		}
 	}
 	for (int64_t i = 0; i < thread_count - 1; i++) {
@@ -348,7 +347,7 @@ topologika_run(struct thread_context *contexts, int64_t thread_count, int64_t wo
 			topologika_thread_func(&contexts[i]);
 		} else {
 			int ret = pthread_create(&handles[i], NULL, topologika_thread_func, &contexts[i]);
-			assert(ret == 0);
+			assert(ret == 0); // TODO: return error
 		}
 	}
 	for (int64_t i = 0; i < thread_count - 1; i++) {
@@ -1228,8 +1227,6 @@ compute_reduced_bridge_set_internal(struct topologika_domain const *domain, int6
 	printf("done\n");
 #endif
 
-	struct region const *region = &domain->regions[region_id];
-
 	// sort vertices
 	topologika_event_begin(events, topologika_event_color_orange, "Sort");
 	struct stack_allocation tmp_allocation = stack_allocator_alloc(stack_allocator, 8, vertex_count*sizeof *vertices);
@@ -1414,8 +1411,6 @@ enum topologika_result
 compute_reduced_bridge_set(struct topologika_domain const *domain, int64_t region_id, struct stack_allocator *stack_allocator, struct topologika_events *events,
 	struct reduced_bridge_set **out_reduced_bridge_set)
 {
-	struct region const *region = &domain->regions[region_id];
-
 	int64_t region_position[] = {
 		region_id%domain->dims[0],
 		region_id/domain->dims[0]%domain->dims[1],
