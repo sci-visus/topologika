@@ -598,7 +598,7 @@ struct stack_allocation {
 // TODO: memory passed in must be zero initialized
 // TODO: memory passed in must be page aligned
 void
-stack_allocator_init(struct stack_allocator *allocator, unsigned char *memory, size_t size)
+stack_allocator_init(struct stack_allocator *allocator, size_t size, unsigned char *memory)
 {
 	*allocator = (struct stack_allocator){
 		.memory = memory,
@@ -609,7 +609,7 @@ stack_allocator_init(struct stack_allocator *allocator, unsigned char *memory, s
 
 
 struct stack_allocation
-stack_allocator_alloc(struct stack_allocator *allocator, size_t size, size_t alignment)
+stack_allocator_alloc(struct stack_allocator *allocator, size_t alignment, size_t size)
 {
 	assert(allocator->memory != NULL);
 	assert(alignment <= 4096);
@@ -708,40 +708,40 @@ struct inlined_vertex_double {
 };
 
 void
-radix_sort_float(struct inlined_vertex_float *in, struct inlined_vertex_float *out, int shift, int64_t n)
+radix_sort_float(int64_t count, struct inlined_vertex_float *in, struct inlined_vertex_float *out, int shift)
 {
 	int64_t index[256] = {0};
-	for (int64_t i = 0; i < n; i++) {
+	for (int64_t i = 0; i < count; i++) {
 		union cast {
 			topologika_data_t in;
 			uint32_t out;
 		};
 		uint32_t x = (union cast){.in = in[i].value}.out;
 		uint32_t tmp = x^(((int32_t)x >> 31) | 0x80000000);
-		index[(tmp>>shift)&0xFF]++;
+		index[(tmp >> shift) & 0xFF]++;
 	}
-	for (int64_t i = 0, count = 0; i < 256; i++) {
-		count += index[i];
-		index[i] = count - index[i];
+	for (int64_t i = 0, offset = 0; i < 256; i++) {
+		offset += index[i];
+		index[i] = offset - index[i];
 	}
-	for (int64_t i = 0; i < n; i++) {
+	for (int64_t i = 0; i < count; i++) {
 		union cast {
 			topologika_data_t in;
 			uint32_t out;
 		};
 		uint32_t x = (union cast){.in = in[i].value}.out;
 		uint32_t tmp = x^(((int32_t)x >> 31) | 0x80000000);
-		out[index[(tmp>>shift)&0xFF]++] = in[i];
+		out[index[(tmp >> shift) & 0xFF]++] = in[i];
 	}
 }
 
 void
-sort_vertices_float(struct inlined_vertex_float *vertices, int64_t vertex_count, struct inlined_vertex_float *tmp)
+sort_vertices_float(int64_t vertex_count, struct inlined_vertex_float *vertices, struct inlined_vertex_float *tmp)
 {
-	radix_sort_float(vertices, tmp, 0, vertex_count);
-	radix_sort_float(tmp, vertices, 8, vertex_count);
-	radix_sort_float(vertices, tmp, 16, vertex_count);
-	radix_sort_float(tmp, vertices, 24, vertex_count);
+	radix_sort_float(vertex_count, vertices, tmp, 0);
+	radix_sort_float(vertex_count, tmp, vertices, 8);
+	radix_sort_float(vertex_count, vertices, tmp, 16);
+	radix_sort_float(vertex_count, tmp, vertices, 24);
 }
 
 
@@ -763,7 +763,7 @@ compute_merge_tree(struct region const *region, struct stack_allocator *stack_al
 
 	// TODO: return pointer and then when we free data pass size
 	struct inlined_vertex_float *vertices = NULL;
-	struct stack_allocation vertices_allocation = stack_allocator_alloc(stack_allocator, vertex_count*sizeof *vertices, 8);
+	struct stack_allocation vertices_allocation = stack_allocator_alloc(stack_allocator, 8, vertex_count*sizeof *vertices);
 	assert(vertices_allocation.ptr != NULL);
 	vertices = vertices_allocation.ptr;
 
@@ -783,15 +783,15 @@ compute_merge_tree(struct region const *region, struct stack_allocator *stack_al
 	}
 	topologika_event_end(events);
 
-	struct stack_allocation tmp_allocation = stack_allocator_alloc(stack_allocator, vertex_count*sizeof *vertices, 8);
+	struct stack_allocation tmp_allocation = stack_allocator_alloc(stack_allocator, 8, vertex_count*sizeof *vertices);
 	topologika_event_begin(events, topologika_event_color_green, "Sort");
-	sort_vertices_float(vertices, vertex_count, tmp_allocation.ptr);
+	sort_vertices_float(vertex_count, vertices, tmp_allocation.ptr);
 	topologika_event_end(events);
 	stack_allocator_free(stack_allocator, tmp_allocation);
 
 
 	struct disjoint_set *components = NULL;
-	struct stack_allocation components_allocation = stack_allocator_alloc(stack_allocator, sizeof *components + vertex_count*sizeof *components->parent, 8);
+	struct stack_allocation components_allocation = stack_allocator_alloc(stack_allocator, 8, sizeof *components + vertex_count*sizeof *components->parent);
 	if (components_allocation.ptr == NULL) {
 		// TODO: free other memory
 		return topologika_error_out_of_memory;
@@ -1171,45 +1171,49 @@ global_position_to_local_id(struct topologika_domain const *domain, int64_t regi
 
 
 void
-radix_sort_bs(struct vertex *in, struct vertex *out, int shift, int64_t n)
+radix_sort_bs(int64_t count, struct vertex *in, struct vertex *out, int shift)
 {
 	int64_t index[256] = {0};
-	for (int64_t i = 0; i < n; i++) {
+	for (int64_t i = 0; i < count; i++) {
 		union cast {
 			topologika_data_t in;
 			uint32_t out;
 		};
 		uint32_t x = (union cast){.in = in[i].value}.out;
 		uint32_t tmp = x^(((int32_t)x >> 31) | 0x80000000);
-		index[(tmp>>shift)&0xFF]++;
+		index[(tmp >> shift) & 0xFF]++;
 	}
-	for (int64_t i = 0, count = 0; i < 256; i++) {
-		count += index[i];
-		index[i] = count - index[i];
+	for (int64_t i = 0, offset = 0; i < 256; i++) {
+		offset += index[i];
+		index[i] = offset - index[i];
 	}
-	for (int64_t i = 0; i < n; i++) {
+	for (int64_t i = 0; i < count; i++) {
 		union cast {
 			topologika_data_t in;
 			uint32_t out;
 		};
 		uint32_t x = (union cast){.in = in[i].value}.out;
 		uint32_t tmp = x^(((int32_t)x >> 31) | 0x80000000);
-		out[index[(tmp>>shift)&0xFF]++] = in[i];
+		out[index[(tmp >> shift) & 0xFF]++] = in[i];
 	}
 }
 
 void
-sort_reduced_bridge_set(struct vertex *vertices, int64_t count, struct vertex *tmp)
+sort_reduced_bridge_set(int64_t count, struct vertex *vertices, struct vertex *tmp)
 {
-	radix_sort_bs(vertices, tmp, 0, count);
-	radix_sort_bs(tmp, vertices, 8, count);
-	radix_sort_bs(vertices, tmp, 16, count);
-	radix_sort_bs(tmp, vertices, 24, count);
+	radix_sort_bs(count, vertices, tmp, 0);
+	radix_sort_bs(count, tmp, vertices, 8);
+	radix_sort_bs(count, vertices, tmp, 16);
+	radix_sort_bs(count, tmp, vertices, 24);
 }
 
 
 struct reduced_bridge_set *
-compute_reduced_bridge_set_internal(struct topologika_domain const *domain, int64_t region_id, int64_t neighbor_region_id, struct vertex *vertices, int64_t vertex_count, int64_t (*const neighbors_local)[3], int64_t neighbors_local_count, int64_t (*const neighbors_outside)[3], int64_t neighbors_outside_count, struct stack_allocator *stack_allocator, struct topologika_events *events)
+compute_reduced_bridge_set_internal(struct topologika_domain const *domain, int64_t region_id, int64_t neighbor_region_id,
+	int64_t vertex_count, struct vertex *vertices,
+	int64_t neighbors_local_count, int64_t (*const neighbors_local)[3],
+	int64_t neighbors_outside_count,  int64_t (*const neighbors_outside)[3],
+	struct stack_allocator *stack_allocator, struct topologika_events *events)
 {
 	if (vertex_count == 0) {
 		return NULL;
@@ -1228,8 +1232,8 @@ compute_reduced_bridge_set_internal(struct topologika_domain const *domain, int6
 
 	// sort vertices
 	topologika_event_begin(events, topologika_event_color_orange, "Sort");
-	struct stack_allocation tmp_allocation = stack_allocator_alloc(stack_allocator, vertex_count*sizeof *vertices, 8);
-	sort_reduced_bridge_set(vertices, vertex_count, tmp_allocation.ptr);
+	struct stack_allocation tmp_allocation = stack_allocator_alloc(stack_allocator, 8, vertex_count*sizeof *vertices);
+	sort_reduced_bridge_set(vertex_count, vertices, tmp_allocation.ptr);
 	stack_allocator_free(stack_allocator, tmp_allocation);
 	topologika_event_end(events);
 
@@ -1246,7 +1250,7 @@ compute_reduced_bridge_set_internal(struct topologika_domain const *domain, int6
 	int64_t const bridge_set_capacity = region_dims[0]*region_dims[1]*8; // TODO: works only for 14 or smaller neighborhood
 	uint32_t bridge_set_count = 0;
 	struct bedge *bridge_set = NULL;
-	struct stack_allocation bridge_set_allocation = stack_allocator_alloc(stack_allocator, bridge_set_capacity*sizeof *bridge_set, 8);
+	struct stack_allocation bridge_set_allocation = stack_allocator_alloc(stack_allocator, 8, bridge_set_capacity*sizeof *bridge_set);
 	bridge_set = bridge_set_allocation.ptr;
 	assert(bridge_set != NULL);
 	assert(bridge_set_capacity < TOPOLOGIKA_LOCAL_MAX); // TODO: we are using TOPOLOGIKA_LOCAL_MAX as invalid component id for now
@@ -1420,7 +1424,7 @@ compute_reduced_bridge_set(struct topologika_domain const *domain, int64_t regio
 
 	struct vertex *vertices = NULL;
 	assert(region_dims[0] == region_dims[1] && region_dims[1] == region_dims[2]);
-	struct stack_allocation vertices_allocation = stack_allocator_alloc(stack_allocator, 2*region_dims[0]*region_dims[1]*sizeof *vertices, 8);
+	struct stack_allocation vertices_allocation = stack_allocator_alloc(stack_allocator, 8, 2*region_dims[0]*region_dims[1]*sizeof *vertices);
 	vertices = vertices_allocation.ptr;
 	assert(vertices != NULL);
 	struct reduced_bridge_set *reduced_bridge_sets[neighbor_count] = {0};
@@ -1481,7 +1485,7 @@ compute_reduced_bridge_set(struct topologika_domain const *domain, int64_t regio
 			vertex_count = compute_reduced_bridge_set_vertices(domain, region_id, neighbors[neighbor_index], vertices, vertex_count);
 		}
 
-		reduced_bridge_sets[neighbor_index] = compute_reduced_bridge_set_internal(domain, region_id, neighbor_region_id, vertices, vertex_count, neighbors_inside, neighbor_inside_count, neighbors_outside, neighbor_outside_count, stack_allocator, events);
+		reduced_bridge_sets[neighbor_index] = compute_reduced_bridge_set_internal(domain, region_id, neighbor_region_id, vertex_count, vertices, neighbor_inside_count, neighbors_inside, neighbor_outside_count, neighbors_outside, stack_allocator, events);
 	}
 
 	// union bridge sets
@@ -1519,30 +1523,30 @@ compute_reduced_bridge_set(struct topologika_domain const *domain, int64_t regio
 
 // lowest arc id first
 void
-radix_sort_edges(struct reduced_bridge_set_edge *in, struct reduced_bridge_set_edge *out, int shift, int64_t n, topologika_local_t const *vertex_to_arc)
+radix_sort_edges(int64_t count, struct reduced_bridge_set_edge *in, struct reduced_bridge_set_edge *out, int shift, topologika_local_t const *vertex_to_arc)
 {
 	int64_t index[256] = {0};
-	for (int64_t i = 0; i < n; i++) {
+	for (int64_t i = 0; i < count; i++) {
 		uint32_t tmp = vertex_to_arc[in[i].local_id];
-		index[(tmp>>shift)&0xFF]++;
+		index[(tmp >> shift) & 0xFF]++;
 	}
-	for (int64_t i = 0, count = 0; i < 256; i++) {
-		count += index[i];
-		index[i] = count - index[i];
+	for (int64_t i = 0, offset = 0; i < 256; i++) {
+		offset += index[i];
+		index[i] = offset - index[i];
 	}
-	for (int64_t i = 0; i < n; i++) {
+	for (int64_t i = 0; i < count; i++) {
 		uint32_t tmp = vertex_to_arc[in[i].local_id];
-		out[index[(tmp>>shift)&0xFF]++] = in[i];
+		out[index[(tmp >> shift) & 0xFF]++] = in[i];
 	}
 }
 void
-sort_edges(struct reduced_bridge_set_edge *in, int64_t count, struct reduced_bridge_set_edge *tmp, topologika_local_t const *vertex_to_arc)
+sort_edges(int64_t count, struct reduced_bridge_set_edge *in, struct reduced_bridge_set_edge *tmp, topologika_local_t const *vertex_to_arc)
 {
 	assert(sizeof *vertex_to_arc == 4);
-	radix_sort_edges(in, tmp, 0, count, vertex_to_arc);
-	radix_sort_edges(tmp, in, 8, count, vertex_to_arc);
-	radix_sort_edges(in, tmp, 16, count, vertex_to_arc);
-	radix_sort_edges(tmp, in, 24, count, vertex_to_arc);
+	radix_sort_edges(count, in, tmp, 0, vertex_to_arc);
+	radix_sort_edges(count, tmp, in, 8, vertex_to_arc);
+	radix_sort_edges(count, in, tmp, 16, vertex_to_arc);
+	radix_sort_edges(count, tmp, in, 24, vertex_to_arc);
 }
 
 
@@ -1585,8 +1589,8 @@ compute_region(struct thread_context *context)
 			struct merge_tree *tree = &context->forest->merge_trees[i];
 			struct reduced_bridge_set *set = tree->reduced_bridge_set;
 
-			struct stack_allocation tmp_allocation = stack_allocator_alloc(context->stack_allocator, set->edge_count*sizeof *set->edges, 8);
-			sort_edges(set->edges, set->edge_count, tmp_allocation.ptr, tree->vertex_to_arc);
+			struct stack_allocation tmp_allocation = stack_allocator_alloc(context->stack_allocator, 8, set->edge_count*sizeof *set->edges);
+			sort_edges(set->edge_count, set->edges, tmp_allocation.ptr, tree->vertex_to_arc);
 			stack_allocator_free(context->stack_allocator, tmp_allocation);
 
 			// TODO: merge into a single allocation? (more robust)
@@ -1709,7 +1713,7 @@ topologika_compute_merge_forest_from_grid(topologika_data_t const *data, int64_t
 		}
 	}
 	for (int64_t i = 0; i < thread_count; i++) {
-		stack_allocator_init(&stack_allocators[i], &stack_allocators_memory[i*size], size);
+		stack_allocator_init(&stack_allocators[i], size, &stack_allocators_memory[i*size]);
 	}
 
 	forest = malloc(sizeof *forest + region_count*sizeof *forest->merge_trees);

@@ -76,7 +76,7 @@ TopologikaMergeForest_init(TopologikaMergeForestObject *self, PyObject *args, Py
 	}
 	if (array == NULL || !PyArray_CHKFLAGS(array, NPY_ARRAY_C_CONTIGUOUS) ||
 		PyArray_TYPE(array) != NPY_FLOAT || PyArray_NDIM(array) != 3) {
-		PyErr_SetString(PyExc_ValueError, "The input array must be 3D, currently it is BLA. For example, numpy.zeros((10, 10, 10)).");
+		PyErr_SetString(PyExc_ValueError, "The input array must be 3D, currently it is TODO. For example, numpy.zeros((10, 10, 10)).");
 		return -1;
 	}
 
