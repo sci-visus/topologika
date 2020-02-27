@@ -80,9 +80,12 @@ TopologikaMergeForest_init(TopologikaMergeForestObject *self, PyObject *args, Py
 		return -1;
 	}
 
-	self->dims[0] = PyArray_DIM(array, 0);
+	// we use dims[0] as width, dims[1] as height, and dims[2] as depth (which is reverse order
+	//	than that of a numpy array
+	// TODO(2/27/2020): should we switch to numpy's way of representing the dimensions of a 3D matrix?
+	self->dims[0] = PyArray_DIM(array, 2);
 	self->dims[1] = PyArray_DIM(array, 1);
-	self->dims[2] = PyArray_DIM(array, 2);
+	self->dims[2] = PyArray_DIM(array, 0);
 
 	switch (PyArray_TYPE(array)) {
 	case NPY_FLOAT: {
@@ -254,12 +257,41 @@ TopologikaMergeForest_query_component(TopologikaMergeForestObject *self, PyObjec
 
 
 
+static PyObject *
+TopologikaMergeForest_query_persistence(TopologikaMergeForestObject* self, PyObject* args, PyObject* keywds)
+{
+	char *kwlist[] = {"vertex_index", NULL};
+	int64_t global_vertex_index = 0;
+	if (!PyArg_ParseTupleAndKeywords(args, keywds, "L", kwlist, &global_vertex_index)) {
+		return NULL;
+	}
+
+	int64_t vertex_count = self->dims[0]*self->dims[1]*self->dims[2];
+	if (global_vertex_index < 0 || global_vertex_index >= vertex_count) {
+		return PyErr_Format(PyExc_ValueError, "The global index %"PRIi64" lies outside the domain (the range is [0, %"PRIi64"))", global_vertex_index, vertex_count);
+	}
+
+	struct topologika_vertex vertex = topologika_global_index_to_vertex(self->dims, self->domain, global_vertex_index);
+
+	double persistence = 0.0f;
+	enum topologika_result result = topologika_query_persistence(self->domain, self->forest, vertex, &persistence);
+	if (result != topologika_result_success) {
+		// TODO
+		return PyErr_Format(PyExc_BaseException, "Persistence query failed.");
+	}
+
+	return PyFloat_FromDouble(persistence);
+}
+
+
+
 
 static PyMethodDef TopologikeMergeForest_methods[] = {
-	//{"query_component_max", (PyCFunction)TopologikaMergeForest_query_component_max, METH_VARARGS | METH_KEYWORDS, "Return the maximum for the given vertex in its component."},
+	{"query_component_max", (PyCFunction)TopologikaMergeForest_query_component_max, METH_VARARGS | METH_KEYWORDS, "Given a vertex and threshold return the highest vertex in a connected component containing the vertex at the specified threshold."},
 	{"query_component", (PyCFunction)TopologikaMergeForest_query_component, METH_VARARGS | METH_KEYWORDS, "Given a vertex and threshold return the connected component containing the vertex."},
 	{"query_components", (PyCFunction)TopologikaMergeForest_query_components, METH_VARARGS | METH_KEYWORDS, "Return vertices of all connected components at the given threshold."},
 	{"query_maxima", (PyCFunction)TopologikaMergeForest_query_maxima, METH_NOARGS, "Returns all maxima in the data set."},
+	{"query_persistence", (PyCFunction)TopologikaMergeForest_query_persistence, METH_VARARGS | METH_KEYWORDS, "Given a maximum return its persistence."},
 	{NULL},
 };
 
@@ -268,7 +300,7 @@ static PyTypeObject TopologikaMergeForestType = {
 	PyVarObject_HEAD_INIT(NULL, 0)
 	.tp_name = "topologika.MergeForest",
 	.tp_doc = "Merge forest",
-	.tp_basicsize = sizeof(TopologikaMergeForestObject),
+	.tp_basicsize = sizeof (TopologikaMergeForestObject),
 	.tp_itemsize = 0,
 	.tp_flags = Py_TPFLAGS_DEFAULT, //| Py_TPFLAGS_BASETYPE,
 	.tp_new = TopologikaMergeForest_new,

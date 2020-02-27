@@ -34,6 +34,9 @@ Changes from the VIS code:
 	- removed OpenMP dependency to simplify build process on Mac
 */
 
+// TODO(2/27/2020): queries should not take the domain but just forest? (thus for many queries we could do away with the data),
+//	this would require caching of function values at arc's highest vertices and reduced bridge set end vertices, but we avoid a cache
+//	miss since when the arc/reduced bridge set edge is accessed we also pull the values
 // TODO(1/7/2020): use edges instead of vertices for the reduced bridge set computation (simplifies support of Duong's grid)
 // TODO(12/3/2019): try abstract the forest component traversal so it can be reused for component_max and maxima queries
 // TODO(12/3/2019): pin threads or allow user to force thread pinning (similar to OMP_PLACES=cores and OMP_PROC_BIND=spread);
@@ -63,6 +66,7 @@ Changes from the VIS code:
 
 #include <assert.h>
 #include <inttypes.h>
+#include <math.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -1774,112 +1778,7 @@ out_of_memory:
 }
 
 
-
-
-// TODO: should we take pair vertex, threshold and do multiple queries?
-enum topologika_result
-topologika_query_component_max(struct topologika_domain const *domain, struct topologika_merge_forest const *forest, struct topologika_vertex vertex, double threshold, struct topologika_vertex *out_max_vertex)
-{
-	assert(domain != NULL && forest != NULL);
-
-	return topologika_error_no_output;
-}
-
-
-// TODO: take in thresholds? bounding boxes?
-// TODO: how to deal with memory alloc/dealloc for the query? (probably avoid malloc and free, take allocator as parameter?)
-enum topologika_result
-topologika_query_maxima(struct topologika_domain const *domain, struct topologika_merge_forest const *forest, struct topologika_vertex **out_maxima, int64_t *out_maximum_count)
-{
-	assert(domain != NULL && forest != NULL);
-
-	int64_t maximum_count = 0;
-	int64_t maximum_capacity = 1024;
-	struct topologika_vertex *maxima = malloc(maximum_capacity*sizeof *maxima);
-	if (maxima == NULL) {
-		return topologika_error_out_of_memory;
-	}
-
-	for (int64_t region_index = 0; region_index < forest->merge_tree_count; region_index++) {
-		struct merge_tree const *merge_tree = &forest->merge_trees[region_index];
-
-		for (int64_t arc_index = 0; arc_index < merge_tree->arc_count; arc_index++) {
-			struct merge_tree_arc const *arc = &merge_tree->arcs[arc_index];
-			if (arc->child_count != 0) {
-				continue;
-			}
-#if defined(TOPOLOGIKA_DUMP)
-			printf("region_id %d, arc_id %d\n", region_index, arc_index);
-#endif
-
-			topologika_data_t value = domain->regions[region_index].data[arc->max_vertex_id];
-
-			bool has_above_neighbor = false;
-			for (int64_t i = 0; i < merge_tree->reduced_bridge_set_counts[arc_index]; i++) {
-				struct reduced_bridge_set_edge edge = merge_tree->reduced_bridge_set->edges[merge_tree->reduced_bridge_set_offsets[arc_index] + i];
-				assert(region_index != edge.neighbor_region_id); // NOTE: assumes convex regions?
-#if defined(TOPOLOGIKA_DUMP)
-				printf("\te%d %d\n", edge.local_id, edge.neighbor_local_id);
-#endif
-
-				// TODO: we could sort the bridge set edges per arc to break early (from
-				//	earlier experiments it does not seem worth it; measure again)
-				if (arc->max_vertex_id == edge.local_id) {
-					topologika_data_t neighbor_value = domain->regions[edge.neighbor_region_id].data[edge.neighbor_local_id];
-
-					// after values compare regions, because the SOS implies that if region_id is greater, than
-					//	all vertices in the region are greater (independent of their ids)
-					// TODO: optimize and hoist into is_above function
-					if (neighbor_value == value) {
-						if (edge.neighbor_region_id == region_index) {
-							if (edge.neighbor_local_id > arc->max_vertex_id) {
-								has_above_neighbor = true;
-								break;
-							}
-						} else if (edge.neighbor_region_id > region_index) {
-							has_above_neighbor = true;
-							break;
-						}
-					} else if (neighbor_value > value) {
-						has_above_neighbor = true;
-						break;
-					}
-				}
-			}
-			if (has_above_neighbor) {
-				continue;
-			}
-#if defined(TOPOLOGIKA_DUMP)
-			printf("\tmaximum %d\n", arc->max_vertex_id);
-#endif
-
-			if (maximum_count == maximum_capacity) {
-				maximum_capacity *= 2;
-				struct topologika_vertex *tmp = realloc(maxima, maximum_capacity*sizeof *maxima);
-				if (tmp == NULL) {
-					free(maxima);
-					return topologika_error_out_of_memory;
-				}
-				maxima = tmp;
-			}
-			maxima[maximum_count++] = (struct topologika_vertex){
-				.vertex_index = arc->max_vertex_id,
-				.region_index = (topologika_local_t)region_index,
-			};
-		}
-	}
-
-	*out_maxima = maxima;
-	*out_maximum_count = maximum_count;
-	return topologika_result_success;
-}
-
-
-
-
-
-
-////////////////////// components query //////////////////////////////////////
+////////////////////// component max query //////////////////////////////////////
 
 struct hash_set {
 	uint64_t count;
@@ -1993,7 +1892,7 @@ struct set {
 };
 
 struct set *
-set_create(void)
+	set_create(void)
 {
 	struct set *set = malloc(sizeof *set);
 	assert(set != NULL);
@@ -2034,6 +1933,260 @@ struct worklist {
 };
 
 
+struct component_max_result {
+	topologika_data_t value;
+	topologika_local_t vertex_index;
+	topologika_local_t region_index;
+};
+
+bool
+topologika_is_above( struct component_max_result v0, struct component_max_result v1)
+{
+	if (v0.value == v1.value) {
+		return (v0.region_index == v1.region_index) ? v0.vertex_index > v1.vertex_index : v0.region_index > v1.region_index;
+	}
+	return v0.value > v1.value;
+}
+
+// TODO(2/27/2020): from_arc_id is not needed as it is always same as arc_id when the function is called
+enum topologika_result
+query_component_max_region_internal(struct topologika_domain const *domain, struct topologika_merge_forest const *forest, double threshold, topologika_local_t arc_id, topologika_local_t region_id, struct set *visited, struct worklist **todo,
+	struct component_max_result *out_max_vertex)
+{
+	struct merge_tree const *tree = &forest->merge_trees[region_id];
+	struct component_max_result max_vertex = {.vertex_index = TOPOLOGIKA_LOCAL_MAX}; // BOTTOM
+
+	// TODO(2/27/2020): we are overallocating potentially here, reducing the performance (should not be an issue
+	//	if we use stack allocator)
+	int64_t stack_capacity = tree->arc_count;
+	struct stack_item {
+		topologika_local_t arc_id;
+		topologika_local_t from_arc_id;
+	} *stack = malloc(stack_capacity*sizeof *stack);
+	assert(stack != NULL);
+	int64_t stack_count = 0;
+	
+	stack[stack_count++] = (struct stack_item){.arc_id = arc_id, .from_arc_id = arc_id};
+	while (stack_count != 0) {
+		struct stack_item item = stack[--stack_count];
+
+		struct merge_tree_arc const *arc = &tree->arcs[item.arc_id];
+
+		struct component_max_result v = (struct component_max_result){.value = domain->regions[region_id].data[arc->max_vertex_id], .vertex_index = arc->max_vertex_id, .region_index = region_id,};
+		if (max_vertex.vertex_index == TOPOLOGIKA_LOCAL_MAX || topologika_is_above(v, max_vertex)) {
+			max_vertex = v;
+		}
+
+		// process neighbors
+		for (int64_t i = 0; i < arc->child_count; i++) {
+			if (arc->children[i] == item.from_arc_id) {
+				continue;
+			}
+			assert(stack_count < stack_capacity);
+			stack[stack_count++] = (struct stack_item){.arc_id = arc->children[i], .from_arc_id = item.arc_id};
+		}
+		// TODO(2/27/2020): simulation of simplicity will probably be needed when this query is used in
+		//	the persistence query
+		if (arc->parent != TOPOLOGIKA_LOCAL_MAX && arc->parent != item.from_arc_id &&
+			domain->regions[region_id].data[tree->arcs[arc->parent].max_vertex_id] >= threshold) {
+			assert(stack_count < stack_capacity);
+			stack[stack_count++] = (struct stack_item){.arc_id = arc->parent, .from_arc_id = item.arc_id};
+		}
+
+		// process reduced bridge set edges
+		int64_t worklist_count = (*todo)->count;
+		for (int64_t i = 0; i < tree->reduced_bridge_set_counts[item.arc_id]; i++) {
+			struct reduced_bridge_set_edge edge = tree->reduced_bridge_set->edges[tree->reduced_bridge_set_offsets[item.arc_id] + i];
+
+			if (domain->regions[region_id].data[edge.local_id] < threshold || domain->regions[edge.neighbor_region_id].data[edge.neighbor_local_id] < threshold) {
+				continue;
+			}
+
+			if ((*todo)->count == (*todo)->capacity) {
+				(*todo)->capacity *= 2;
+				struct worklist *tmp = realloc(*todo, sizeof *tmp + (*todo)->capacity*sizeof *tmp->items);
+				if (tmp == NULL) {
+					// TODO: free
+					return topologika_error_out_of_memory;
+				}
+				*todo = tmp;
+			}
+			(*todo)->items[(*todo)->count++] = (struct worklist_item){
+				.arc_id = forest->merge_trees[edge.neighbor_region_id].vertex_to_arc[edge.neighbor_local_id],
+				.region_id = edge.neighbor_region_id,
+			};
+		}
+
+		if (worklist_count != (*todo)->count) {
+			set_insert(visited, item.arc_id, region_id);
+		}
+	}
+	free(stack);
+
+	*out_max_vertex = max_vertex;
+
+	return topologika_result_success;
+}
+
+
+// TODO: should we take pair vertex, threshold and do multiple queries?
+// TODO(2/27/2020): should no result be an error or success (bottom)
+enum topologika_result
+topologika_query_component_max(struct topologika_domain const *domain, struct topologika_merge_forest const *forest, struct topologika_vertex vertex, double threshold,
+	struct topologika_vertex *out_max_vertex)
+{
+	assert(domain != NULL && forest != NULL);
+
+	// TODO(2/27/2020): scratch allocator (stack allocator assigned to a thread that executes the query)
+	int64_t capacity = 1024;
+	struct worklist *todo = malloc(sizeof *todo + capacity*sizeof *todo->items);
+	if (todo == NULL) {
+		return topologika_error_out_of_memory;
+	}
+	todo->capacity = capacity;
+	todo->count = 0;
+
+	struct set *visited = set_create();
+
+	struct component_max_result max_vertex = {0};
+
+	// TODO(2/27/2020): abstract into traverse query
+	// TODO(2/27/2020): push onto the worklist and handle inside the for loop below
+	topologika_local_t arc_id = forest->merge_trees[vertex.region_index].vertex_to_arc[vertex.vertex_index];
+	enum topologika_result result = query_component_max_region_internal(domain, forest, threshold, arc_id, vertex.region_index, visited, &todo, &max_vertex);
+	if (result != topologika_result_success) {
+		free(todo);
+		set_destroy(visited);
+		return result;
+	}
+
+	for (int64_t i = 0; i < todo->count; i++) {
+		if (set_contains(visited, todo->items[i].arc_id, todo->items[i].region_id)) {
+			continue;
+		}
+
+		struct component_max_result tmp = {0};
+		enum topologika_result result = query_component_max_region_internal(domain, forest, threshold, todo->items[i].arc_id, todo->items[i].region_id, visited, &todo, &tmp);
+		if (result != topologika_result_success) {
+			free(todo);
+			set_destroy(visited);
+			return result;
+		}
+
+		if (tmp.vertex_index == TOPOLOGIKA_LOCAL_MAX) {
+			continue;
+		}
+		if (topologika_is_above(tmp, max_vertex)) {
+			max_vertex = tmp;
+		}
+	}
+
+	free(todo);
+	set_destroy(visited);
+
+	*out_max_vertex = (struct topologika_vertex){.vertex_index = max_vertex.vertex_index, .region_index = max_vertex.region_index};
+
+	return topologika_result_success;
+}
+
+
+
+
+////////////////////// maxima query //////////////////////////////////////
+// TODO: take in thresholds? bounding boxes?
+// TODO: how to deal with memory alloc/dealloc for the query? (probably avoid malloc and free, take allocator as parameter?)
+enum topologika_result
+topologika_query_maxima(struct topologika_domain const *domain, struct topologika_merge_forest const *forest, struct topologika_vertex **out_maxima, int64_t *out_maximum_count)
+{
+	assert(domain != NULL && forest != NULL);
+
+	int64_t maximum_count = 0;
+	int64_t maximum_capacity = 1024;
+	struct topologika_vertex *maxima = malloc(maximum_capacity*sizeof *maxima);
+	if (maxima == NULL) {
+		return topologika_error_out_of_memory;
+	}
+
+	for (int64_t region_index = 0; region_index < forest->merge_tree_count; region_index++) {
+		struct merge_tree const *merge_tree = &forest->merge_trees[region_index];
+
+		for (int64_t arc_index = 0; arc_index < merge_tree->arc_count; arc_index++) {
+			struct merge_tree_arc const *arc = &merge_tree->arcs[arc_index];
+			if (arc->child_count != 0) {
+				continue;
+			}
+#if defined(TOPOLOGIKA_DUMP)
+			printf("region_id %d, arc_id %d\n", region_index, arc_index);
+#endif
+
+			topologika_data_t value = domain->regions[region_index].data[arc->max_vertex_id];
+
+			bool has_above_neighbor = false;
+			for (int64_t i = 0; i < merge_tree->reduced_bridge_set_counts[arc_index]; i++) {
+				struct reduced_bridge_set_edge edge = merge_tree->reduced_bridge_set->edges[merge_tree->reduced_bridge_set_offsets[arc_index] + i];
+				assert(region_index != edge.neighbor_region_id); // NOTE: assumes convex regions?
+#if defined(TOPOLOGIKA_DUMP)
+				printf("\te%d %d\n", edge.local_id, edge.neighbor_local_id);
+#endif
+
+				// TODO: we could sort the bridge set edges per arc to break early (from
+				//	earlier experiments it does not seem worth it; measure again)
+				if (arc->max_vertex_id == edge.local_id) {
+					topologika_data_t neighbor_value = domain->regions[edge.neighbor_region_id].data[edge.neighbor_local_id];
+
+					// after values compare regions, because the SOS implies that if region_id is greater, than
+					//	all vertices in the region are greater (independent of their ids)
+					// TODO: optimize and hoist into is_above function
+					if (neighbor_value == value) {
+						if (edge.neighbor_region_id == region_index) {
+							if (edge.neighbor_local_id > arc->max_vertex_id) {
+								has_above_neighbor = true;
+								break;
+							}
+						} else if (edge.neighbor_region_id > region_index) {
+							has_above_neighbor = true;
+							break;
+						}
+					} else if (neighbor_value > value) {
+						has_above_neighbor = true;
+						break;
+					}
+				}
+			}
+			if (has_above_neighbor) {
+				continue;
+			}
+#if defined(TOPOLOGIKA_DUMP)
+			printf("\tmaximum %d\n", arc->max_vertex_id);
+#endif
+
+			if (maximum_count == maximum_capacity) {
+				maximum_capacity *= 2;
+				struct topologika_vertex *tmp = realloc(maxima, maximum_capacity*sizeof *maxima);
+				if (tmp == NULL) {
+					free(maxima);
+					return topologika_error_out_of_memory;
+				}
+				maxima = tmp;
+			}
+			maxima[maximum_count++] = (struct topologika_vertex){
+				.vertex_index = arc->max_vertex_id,
+				.region_index = (topologika_local_t)region_index,
+			};
+		}
+	}
+
+	*out_maxima = maxima;
+	*out_maximum_count = maximum_count;
+	return topologika_result_success;
+}
+
+
+
+
+
+
+////////////////////// components query //////////////////////////////////////
 enum topologika_result
 query_components_region_internal(struct topologika_domain const *domain, struct topologika_merge_forest const *forest, double threshold, topologika_local_t arc_id, topologika_local_t from_arc_id, topologika_local_t region_id, struct set *visited, struct worklist **todo,
 	struct topologika_component **out_component)
@@ -2331,6 +2484,44 @@ topologika_query_component(struct topologika_domain const *domain, struct topolo
 	return topologika_result_success;
 }
 
+
+
+
+////////////////////////// persistence query //////////////////////////////
+enum topologika_result
+topologika_query_persistence(struct topologika_domain const *domain, struct topologika_merge_forest const *forest, struct topologika_vertex maximum,
+	double *out_persistence)
+{
+	// TODO(2/27/2020): in debug mode assert that the input vertex is a maximum (should we return 0 for regular vertices?)
+
+	struct topologika_vertex priority_queue[1] = {maximum};
+	int64_t priority_queue_size = 1;
+
+	while (priority_queue_size > 0) {
+		struct topologika_vertex v = priority_queue[--priority_queue_size];
+
+		struct topologika_vertex v_star = {0};
+		enum topologika_result result = topologika_query_component_max(domain, forest, v, domain->regions[v.region_index].data[v.vertex_index], &v_star);
+		assert(result == topologika_result_success);
+
+		if (maximum.region_index != v_star.region_index || maximum.vertex_index != v_star.vertex_index) {
+			*out_persistence = domain->regions[maximum.region_index].data[maximum.vertex_index] - domain->regions[v.region_index].data[v.vertex_index];
+			return topologika_result_success;
+		}
+
+		struct merge_tree_arc const *arc = &forest->merge_trees[v.region_index].arcs[forest->merge_trees[v.region_index].vertex_to_arc[v.vertex_index]];
+		if (arc->parent != TOPOLOGIKA_LOCAL_MAX) {
+			priority_queue[priority_queue_size++] = (struct topologika_vertex){
+				.vertex_index = forest->merge_trees[v.region_index].arcs[arc->parent].max_vertex_id,
+				.region_index = v.region_index,
+			};
+		}
+	}
+
+	*out_persistence = INFINITY;
+
+	return topologika_result_success;
+}
 
 
 
