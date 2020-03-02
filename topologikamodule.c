@@ -302,7 +302,7 @@ static PyTypeObject TopologikaMergeForestType = {
 	.tp_doc = "Merge forest",
 	.tp_basicsize = sizeof (TopologikaMergeForestObject),
 	.tp_itemsize = 0,
-	.tp_flags = Py_TPFLAGS_DEFAULT, //| Py_TPFLAGS_BASETYPE,
+	.tp_flags = Py_TPFLAGS_DEFAULT,
 	.tp_new = TopologikaMergeForest_new,
 	.tp_init = (initproc)TopologikaMergeForest_init,
 	.tp_dealloc = (destructor)TopologikaMergeForest_dealloc,
@@ -324,6 +324,9 @@ PyInit_topologika(void)
 	// TODO: static asserts
 	assert(sizeof (long long) == sizeof (int64_t));
 
+	// TODO(2/28/2020): segfault in PyType_Ready if the library is compiled in a debug mode
+	//	python setup.py build -g -f && python setup.py install --user
+	//	python -m unittest test_persistence.py
 	if (PyType_Ready(&TopologikaMergeForestType) < 0) {
 		return NULL;
 	}

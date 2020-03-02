@@ -33,3 +33,4 @@ jobs:
     - name: Test
       run: |
         python -m unittest test_random.py
+        python -m unittest test_persistence.py

@@ -380,9 +380,10 @@ enum topologika_event_color {
 
 // NOTE: packed because we want recording of events to be fast (to minimize
 //	memory and time impact of profiling)
+// 32 bytes
 struct topologika_event {
 	int64_t ts;
-	char name[16]; // TODO: way too short for descriptive names
+	char name[20];
 	int16_t tid;
 	char ph;
 	int8_t color; // use int8_t instead of enum to be more compact
@@ -526,7 +527,7 @@ enum {neighbor_count = COUNT_OF(neighbors)};
 
 
 struct region {
-	topologika_data_t *data; // TODO: union?
+	topologika_data_t *data; // TODO(2/28/2020): union for different types?
 	int64_t dims[3];
 	enum topologika_type type;
 };
@@ -1258,6 +1259,9 @@ compute_reduced_bridge_set_internal(struct topologika_domain const *domain, int6
 
 	// TODO: scratch buffer (stack allocator)
 	struct ds components;
+	// TODO(2/28/2020): allocate the max of region_dims[0], region_dims[1], region_dims[2] for regions with
+	//	non-uniform aspect radio (e.g., 64x32x32); we could also pass the correct face size from
+	//	the compute_reduced_bridge_set function
 	ds_init(&components, region_dims[0]*region_dims[1]/*vertex_count*/);
 
 	// descending
@@ -2006,7 +2010,7 @@ query_component_max_region_internal(struct topologika_domain const *domain, stru
 				(*todo)->capacity *= 2;
 				struct worklist *tmp = realloc(*todo, sizeof *tmp + (*todo)->capacity*sizeof *tmp->items);
 				if (tmp == NULL) {
-					// TODO: free
+					free(*todo);
 					return topologika_error_out_of_memory;
 				}
 				*todo = tmp;
@@ -2489,12 +2493,12 @@ topologika_query_component(struct topologika_domain const *domain, struct topolo
 
 ////////////////////////// persistence query //////////////////////////////
 enum topologika_result
-topologika_query_persistence(struct topologika_domain const *domain, struct topologika_merge_forest const *forest, struct topologika_vertex maximum,
+topologika_query_persistence(struct topologika_domain const *domain, struct topologika_merge_forest const *forest, struct topologika_vertex vertex,
 	double *out_persistence)
 {
-	// TODO(2/27/2020): in debug mode assert that the input vertex is a maximum (should we return 0 for regular vertices?)
-
-	struct topologika_vertex priority_queue[1] = {maximum};
+	// TODO(2/28/2020): check if we got a regular vertex as input and return 0 early? (probably not worth the extra
+	//	complexity to avoid one ComponentMax query)
+	struct topologika_vertex priority_queue[1] = {vertex};
 	int64_t priority_queue_size = 1;
 
 	while (priority_queue_size > 0) {
@@ -2504,8 +2508,8 @@ topologika_query_persistence(struct topologika_domain const *domain, struct topo
 		enum topologika_result result = topologika_query_component_max(domain, forest, v, domain->regions[v.region_index].data[v.vertex_index], &v_star);
 		assert(result == topologika_result_success);
 
-		if (maximum.region_index != v_star.region_index || maximum.vertex_index != v_star.vertex_index) {
-			*out_persistence = domain->regions[maximum.region_index].data[maximum.vertex_index] - domain->regions[v.region_index].data[v.vertex_index];
+		if (vertex.region_index != v_star.region_index || vertex.vertex_index != v_star.vertex_index) {
+			*out_persistence = (double)domain->regions[vertex.region_index].data[vertex.vertex_index] - (double)domain->regions[v.region_index].data[v.vertex_index];
 			return topologika_result_success;
 		}
 
