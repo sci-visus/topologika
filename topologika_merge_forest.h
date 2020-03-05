@@ -34,6 +34,10 @@ Changes from the VIS code:
 	- removed OpenMP dependency to simplify build process on Mac
 */
 
+// TODO(3/3/2020): allow user specify region dimensions per forest data structure during runtime
+// TODO(3/3/2020): allow user specify number of threads to use for forest construction
+// TODO(3/3/2020): OpenMP removal makes it harder to assign and pin threads to cores (and thus reduces
+//	efficiency of the parallel execution because an OS may use hyperthreads or migrate threads around)
 // TODO(2/27/2020): queries should not take the domain but just forest? (thus for many queries we could do away with the data),
 //	this would require caching of function values at arc's highest vertices and reduced bridge set end vertices, but we avoid a cache
 //	miss since when the arc/reduced bridge set edge is accessed we also pull the values
@@ -72,6 +76,9 @@ Changes from the VIS code:
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+// NOTE(3/3/2020): temporary C++ dependency
+#include "binding.h"
 
 
 
@@ -503,7 +510,7 @@ struct reduced_bridge_set_edge {
 
 
 
-int64_t const region_dims[] = {64, 64, 64};
+int64_t const region_dims[] = { 2, 2, 2 };//{64, 64, 64};
 
 
 // 6 subdivision
@@ -2496,34 +2503,73 @@ enum topologika_result
 topologika_query_persistence(struct topologika_domain const *domain, struct topologika_merge_forest const *forest, struct topologika_vertex vertex,
 	double *out_persistence)
 {
+	printf("\n\nQUERY r %d v %d\n", vertex.region_index, vertex.vertex_index);
+
 	// TODO(2/28/2020): check if we got a regular vertex as input and return 0 early? (probably not worth the extra
 	//	complexity to avoid one ComponentMax query)
-	struct topologika_vertex priority_queue[1] = {vertex};
-	int64_t priority_queue_size = 1;
+	struct priority_queue* pq = pq_create();
+	assert(pq != NULL);
 
-	while (priority_queue_size > 0) {
-		struct topologika_vertex v = priority_queue[--priority_queue_size];
+	bool visited[16][16] = {0};
 
+	pq_enqueue(pq, domain->regions[vertex.region_index].data[vertex.vertex_index], vertex.region_index, vertex.vertex_index, -1);
+
+	while (pq_size(pq) != 0) {
+		int region_index, vertex_index, bridge_set_offset;
+		pq_dequeue(pq, &region_index, &vertex_index, &bridge_set_offset);
+		visited[region_index][vertex_index] = true;
+
+		struct topologika_vertex v = {.vertex_index = vertex_index, .region_index = region_index};
+		printf("compmax query: region %d, local %d, threshold %f\n", v.region_index, v.vertex_index, domain->regions[v.region_index].data[v.vertex_index]);
 		struct topologika_vertex v_star = {0};
 		enum topologika_result result = topologika_query_component_max(domain, forest, v, domain->regions[v.region_index].data[v.vertex_index], &v_star);
 		assert(result == topologika_result_success);
 
 		if (vertex.region_index != v_star.region_index || vertex.vertex_index != v_star.vertex_index) {
+			printf("max r %d v %d\n", v_star.region_index, v_star.vertex_index);
 			*out_persistence = (double)domain->regions[vertex.region_index].data[vertex.vertex_index] - (double)domain->regions[v.region_index].data[v.vertex_index];
+			pq_destroy(pq);
 			return topologika_result_success;
 		}
 
-		struct merge_tree_arc const *arc = &forest->merge_trees[v.region_index].arcs[forest->merge_trees[v.region_index].vertex_to_arc[v.vertex_index]];
+		topologika_local_t arc_index = forest->merge_trees[v.region_index].vertex_to_arc[v.vertex_index];
+		struct merge_tree_arc const *arc = &forest->merge_trees[v.region_index].arcs[arc_index];
 		if (arc->parent != TOPOLOGIKA_LOCAL_MAX) {
-			priority_queue[priority_queue_size++] = (struct topologika_vertex){
+			struct topologika_vertex vv = {
 				.vertex_index = forest->merge_trees[v.region_index].arcs[arc->parent].max_vertex_id,
 				.region_index = v.region_index,
 			};
+			pq_enqueue(pq, domain->regions[vv.region_index].data[vv.vertex_index], vv.region_index, vv.vertex_index, -1);
+		}
+
+		// NOTE(3/3/2020): enqueue all reduced bridge set end vertices for now
+		for (int64_t i = 0; i < forest->merge_trees[v.region_index].reduced_bridge_set_counts[arc_index]; i++) {
+			struct reduced_bridge_set_edge e = forest->merge_trees[v.region_index].reduced_bridge_set->edges[forest->merge_trees[v.region_index].reduced_bridge_set_offsets[arc_index] + i];
+			printf("e r %d v %d, r %d v %d\n", v.region_index, e.local_id, e.neighbor_region_id, e.neighbor_local_id);
+			// TODO: sos
+			topologika_data_t value = domain->regions[v.region_index].data[v.vertex_index];
+			topologika_data_t value0 = domain->regions[v.region_index].data[e.local_id];
+			topologika_data_t value1 = domain->regions[e.neighbor_region_id].data[e.neighbor_local_id];
+			if (value0 < value1) {
+				// we do not want to enqueue bridge set edges above the current value, because the current arc
+				//	can have bridge set edge above the 'value' that is in the other branch of the merge saddle,
+				//	and then the component max of that branch will return different maximum (because we
+				//	always use the threshold at the vertex, if we carried the 'min' of the thresholds, then
+				//	it would work correctly without the 'value0 < value' check); of course, the componentmax
+				//	cache would be less useful)
+				if (!visited[v.region_index][e.local_id] && value0 < value)
+					pq_enqueue(pq, value0, v.region_index, e.local_id, -1);
+			}
+			else {
+				if (!visited[e.neighbor_region_id][e.neighbor_local_id] && value1 < value)
+					pq_enqueue(pq, value1, e.neighbor_region_id, e.neighbor_local_id, -1);
+			}
 		}
 	}
 
 	*out_persistence = INFINITY;
 
+	pq_destroy(pq);
 	return topologika_result_success;
 }
 

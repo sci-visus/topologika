@@ -18,11 +18,11 @@ elif platform.system() == 'Darwin':
     compile_args = ['-std=c99']
     link_args = []
 else:
-    raise Exception('Only Windows and Linux is supported')
+    raise Exception('Only Windows, Linux, and Mac is supported')
 
 module = setuptools.Extension(
     'topologika',
-    sources=['topologikamodule.c'],
+    sources=['topologikamodule.c', 'binding.cpp'],
     extra_compile_args=compile_args,
     extra_link_args=link_args,
     include_dirs=[GetNumpyInclude()]
@@ -34,7 +34,7 @@ setuptools.setup(
     author='Pavol Klacansky',
     author_email='klacansky@sci.utah.edu',
     description='Localized topological data analysis',
-    url='https://github.com/klacansky/topologika',
+    url='https://github.com/pavolklacansky/topologika',
     packages=setuptools.find_packages(),
     python_requires='>=3.6',
     ext_modules=[module],
