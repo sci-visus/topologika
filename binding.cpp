@@ -25,7 +25,7 @@ struct priority_queue {
 extern "C" struct priority_queue *
 pq_create(void)
 {
-	return new struct priority_queue {};
+	return new struct priority_queue();
 }
 
 extern "C" void
