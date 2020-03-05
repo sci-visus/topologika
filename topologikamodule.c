@@ -34,6 +34,11 @@ typedef struct {
 static void
 TopologikaMergeForest_dealloc(TopologikaMergeForestObject *self)
 {
+	if (self->domain == NULL && self->forest == NULL) {
+		Py_TYPE(self)->tp_free((PyObject *)self);
+		return;
+	}
+
 	for (int64_t i = 0; i < self->forest->merge_tree_count; i++) {
 		free(self->domain->regions[i].data);
 
