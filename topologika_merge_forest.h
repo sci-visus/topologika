@@ -11,10 +11,10 @@ References:
 	- Toward Localized Topological Data Structures: Querying the Forest for the Tree.
 
 Releases:
-	- 2020.?
+	- future
 		- parallel query execution and scheduling
 		- approximate analysis
-	- 2020.5
+	- 2020.x
 		- add persistence simplified queries
 		- add traverse component query (allows computation during the traversal)
 		- support for domains that are not multiple of the region size
@@ -76,9 +76,6 @@ Changes from the VIS code:
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-// NOTE(3/3/2020): temporary C++ dependency
-#include "binding.h"
 
 
 
