@@ -2499,6 +2499,101 @@ topologika_query_component(struct topologika_domain const *domain, struct topolo
 
 
 ////////////////////////// persistence query //////////////////////////////
+struct topologika_item {
+	double value;
+	topologika_local_t region_index, vertex_index;
+	topologika_local_t arc_index;
+};
+
+bool
+is_above_(struct topologika_item a, struct topologika_item b)
+{
+	if (a.value == b.value) {
+		assert(false);
+	}
+	return a.value > b.value;
+}
+
+struct topologika_priority_queue {
+	struct topologika_item *array;
+	int64_t count, capacity;
+};
+
+
+void
+topologika_priority_queue_init(struct topologika_priority_queue *pq)
+{
+	pq->count = 1; // NOTE(3/10/2020): we index starting from 1 to simplify parent index computation
+	pq->capacity = 8;
+	pq->array = malloc(pq->capacity*sizeof *pq->array);
+	assert(pq->array != NULL);
+}
+
+// TODO(3/10/2020): pass in allocator
+void
+topologika_priority_queue_enqueue(struct topologika_priority_queue *pq, struct topologika_item item)
+{
+	if (pq->count == pq->capacity) {
+		pq->capacity *= 2;
+		struct topologika_item *tmp = realloc(pq->array, pq->capacity*sizeof *pq->array);
+		assert(tmp != NULL);
+		pq->array = tmp;
+	}
+
+// TODO(3/10/2020): is it worth the macro to improve the readability of code below?
+#define PARENT(index) (index/2)
+
+	int64_t index = pq->count++;
+	while (index > 1 && is_above_(item, pq->array[PARENT(index)])) {
+		pq->array[index] = pq->array[PARENT(index)];
+		index = PARENT(index);
+	}
+	pq->array[index] = item;
+
+#undef PARENT
+}
+
+struct topologika_item
+topologika_priority_queue_dequeue(struct topologika_priority_queue *pq)
+{
+	assert(pq->count < 1);
+
+	struct topologika_item max = pq->array[1];
+	pq->array[1] = pq->array[--pq->count];
+
+	// heapify
+#define LEFT(index) (index*2)
+#define RIGHT(index) (index*2 + 1)
+
+	int64_t index = 1;
+	int64_t largest = index;
+	while (true) {
+		if (LEFT(index) < pq->count && is_above_(pq->array[LEFT(index)], pq->array[largest])) {
+			largest = LEFT(index);
+		}
+		if (RIGHT(index) < pq->count && is_above_(pq->array[RIGHT(index)], pq->array[largest])) {
+			largest = RIGHT(index);
+		}
+		if (largest == index) {
+			break;
+		}
+
+		// swap
+		{
+			struct topologika_item tmp = pq->array[index];
+			pq->array[index] = pq->array[largest];
+			pq->array[largest] = tmp;
+		}
+		index = largest;
+	}
+
+#undef LEFT
+#undef RIGHT
+
+	return max;
+}
+
+
 enum topologika_result
 topologika_query_persistence(struct topologika_domain const *domain, struct topologika_merge_forest const *forest, struct topologika_vertex vertex,
 	double *out_persistence)
@@ -2507,19 +2602,19 @@ topologika_query_persistence(struct topologika_domain const *domain, struct topo
 
 	// TODO(2/28/2020): check if we got a regular vertex as input and return 0 early? (probably not worth the extra
 	//	complexity to avoid one ComponentMax query)
-	struct priority_queue* pq = pq_create();
-	assert(pq != NULL);
 
 	bool visited[16][16] = {0};
 
-	pq_enqueue(pq, domain->regions[vertex.region_index].data[vertex.vertex_index], vertex.region_index, vertex.vertex_index, -1);
+	struct topologika_priority_queue pq = {0};
+	topologika_priority_queue_init(&pq);
 
-	while (pq_size(pq) != 0) {
-		int region_index, vertex_index, bridge_set_offset;
-		pq_dequeue(pq, &region_index, &vertex_index, &bridge_set_offset);
-		visited[region_index][vertex_index] = true;
+	topologika_priority_queue_enqueue(&pq, (struct topologika_item){domain->regions[vertex.region_index].data[vertex.vertex_index], vertex.region_index, vertex.vertex_index, -1});
 
-		struct topologika_vertex v = {.vertex_index = vertex_index, .region_index = region_index};
+	while (pq.count > 1) {
+		struct topologika_item item = topologika_priority_queue_dequeue(&pq);
+		visited[item.region_index][item.vertex_index] = true;
+
+		struct topologika_vertex v = {.vertex_index = item.vertex_index, .region_index = item.region_index};
 		printf("compmax query: region %d, local %d, threshold %f\n", v.region_index, v.vertex_index, domain->regions[v.region_index].data[v.vertex_index]);
 		struct topologika_vertex v_star = {0};
 		enum topologika_result result = topologika_query_component_max(domain, forest, v, domain->regions[v.region_index].data[v.vertex_index], &v_star);
@@ -2528,7 +2623,7 @@ topologika_query_persistence(struct topologika_domain const *domain, struct topo
 		if (vertex.region_index != v_star.region_index || vertex.vertex_index != v_star.vertex_index) {
 			printf("max r %d v %d\n", v_star.region_index, v_star.vertex_index);
 			*out_persistence = (double)domain->regions[vertex.region_index].data[vertex.vertex_index] - (double)domain->regions[v.region_index].data[v.vertex_index];
-			pq_destroy(pq);
+			free(pq.array); // TODO
 			return topologika_result_success;
 		}
 
@@ -2539,7 +2634,7 @@ topologika_query_persistence(struct topologika_domain const *domain, struct topo
 				.vertex_index = forest->merge_trees[v.region_index].arcs[arc->parent].max_vertex_id,
 				.region_index = v.region_index,
 			};
-			pq_enqueue(pq, domain->regions[vv.region_index].data[vv.vertex_index], vv.region_index, vv.vertex_index, -1);
+			topologika_priority_queue_enqueue(&pq, (struct topologika_item){domain->regions[vv.region_index].data[vv.vertex_index], vv.region_index, vv.vertex_index, -1});
 		}
 
 		// NOTE(3/3/2020): enqueue all reduced bridge set end vertices for now
@@ -2558,18 +2653,18 @@ topologika_query_persistence(struct topologika_domain const *domain, struct topo
 				//	it would work correctly without the 'value0 < value' check); of course, the componentmax
 				//	cache would be less useful)
 				if (!visited[v.region_index][e.local_id] && value0 < value)
-					pq_enqueue(pq, value0, v.region_index, e.local_id, -1);
+					topologika_priority_queue_enqueue(&pq, (struct topologika_item){value0, v.region_index, e.local_id, -1});
 			}
 			else {
 				if (!visited[e.neighbor_region_id][e.neighbor_local_id] && value1 < value)
-					pq_enqueue(pq, value1, e.neighbor_region_id, e.neighbor_local_id, -1);
+					topologika_priority_queue_enqueue(&pq, (struct topologika_item){value1, e.neighbor_region_id, e.neighbor_local_id, -1});
 			}
 		}
 	}
 
 	*out_persistence = INFINITY;
 
-	pq_destroy(pq);
+	free(pq.array); // TODO
 	return topologika_result_success;
 }
 

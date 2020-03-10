@@ -22,7 +22,7 @@ else:
 
 module = setuptools.Extension(
     'topologika',
-    sources=['topologikamodule.c', 'binding.cpp'],
+    sources=['topologikamodule.c'],
     extra_compile_args=compile_args,
     extra_link_args=link_args,
     include_dirs=[GetNumpyInclude()]
@@ -30,7 +30,7 @@ module = setuptools.Extension(
 
 setuptools.setup(
     name='topologika',
-    version='2019.11',
+    version='2020.x',
     author='Pavol Klacansky',
     author_email='klacansky@sci.utah.edu',
     description='Localized topological data analysis',

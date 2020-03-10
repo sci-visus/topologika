@@ -4,6 +4,25 @@ import topologika
 import unittest
 
 
+
+
+class TestPersistence1D(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        # TODO(5/3/2020): use region size 2x2x2
+        cls.data = np.array([4, 3, 1, 0, 2, 5], dtype=np.float32).reshape(1, 1, 6)
+        cls.forest = topologika.MergeForest(cls.data)
+
+    def test_maxima_query(self):
+        self.assertEqual(set(self.forest.query_maxima()), set([0, 5]))
+
+    def test_component_max_query(self):
+        self.assertEqual(self.forest.query_component_max(0, 4), 0)
+        self.assertEqual(self.forest.query_component_max(0, 0), 5)
+
+
+
+
 class TestPersistence2D(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
