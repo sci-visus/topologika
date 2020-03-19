@@ -30,7 +30,7 @@ module = setuptools.Extension(
 
 setuptools.setup(
     name='topologika',
-    version='2020.x',
+    version='2020.6',
     author='Pavol Klacansky',
     author_email='klacansky@sci.utah.edu',
     description='Localized topological data analysis',

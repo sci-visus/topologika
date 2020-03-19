@@ -34,7 +34,10 @@ Changes from the VIS code:
 	- removed OpenMP dependency to simplify build process on Mac
 */
 
-// TODO(3/3/2020): allow user specify region dimensions per forest data structure during runtime
+// TODO(3/19/2020): replace divisions by shifts when region_dims is power of two (or use JIT to generate the code with a compiler to keep the code readable)
+// TODO(3/19/2020): the component query has large memory overhead, we either need to use generator or return it as a compact numpy array
+// TODO(3/18/2020): use next pointer (linked-list) to store the arc's children indices instead of an array (more space efficient; should have the same performance)
+// TODO(3/16/2020): we could sort the todos based on the region_id in componentmax and component query to improve cache locality (inspired by distributed forest implementation)
 // TODO(3/3/2020): allow user specify number of threads to use for forest construction
 // TODO(3/3/2020): OpenMP removal makes it harder to assign and pin threads to cores (and thus reduces
 //	efficiency of the parallel execution because an OS may use hyperthreads or migrate threads around)
@@ -100,7 +103,7 @@ enum topologika_result {
 
 // construction
 enum topologika_result
-topologika_compute_merge_forest_from_grid(topologika_data_t const *data, int64_t const *data_dims,
+topologika_compute_merge_forest_from_grid(topologika_data_t const *data, int64_t const *data_dims, int64_t const *region_dims,
 	struct topologika_domain **out_domain, struct topologika_merge_forest **out_forest);
 
 
@@ -170,8 +173,6 @@ struct thread_context {
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 
-#define TOPOLOGIKA_ALWAYS_INLINE __forceinline
-
 int64_t
 usec_counter(void)
 {
@@ -238,8 +239,6 @@ topologika_run(struct thread_context *contexts, int64_t thread_count, int64_t wo
 #include <time.h>
 #include <unistd.h>
 
-#define TOPOLOGIKA_ALWAYS_INLINE inline __attribute__((always_inline))
-
 // TODO: do we need volatile?
 int64_t
 atomic_add(volatile int64_t *addend, int64_t value)
@@ -303,8 +302,6 @@ topologika_run(struct thread_context *contexts, int64_t thread_count, int64_t wo
 #include <pthread.h>
 #include <time.h>
 #include <unistd.h>
-
-#define TOPOLOGIKA_ALWAYS_INLINE inline __attribute__((always_inline))
 
 // TODO: do we need volatile?
 int64_t
@@ -505,11 +502,6 @@ struct reduced_bridge_set_edge {
 
 
 
-
-
-int64_t const region_dims[] = { 2, 2, 2 };//{64, 64, 64};
-
-
 // 6 subdivision
 int64_t const neighbors[][3] = {
 	{0, -1, -1}, // a
@@ -539,6 +531,7 @@ struct region {
 struct topologika_domain {
 	int64_t data_dims[3];
 	int64_t dims[3]; // regions not whole volume; whole volume is dims[0]*regions[0].dims[0], ...
+	int64_t region_dims[3];
 	struct region regions[];
 };
 
@@ -755,7 +748,7 @@ sort_vertices_float(int64_t vertex_count, struct inlined_vertex_float *vertices,
 
 
 
-TOPOLOGIKA_ALWAYS_INLINE enum topologika_result
+enum topologika_result
 compute_merge_tree(struct region const *region, struct stack_allocator *stack_allocator, struct topologika_events *events, int64_t const *dims,
 	struct merge_tree *tree)
 {
@@ -1140,9 +1133,9 @@ int64_t
 topologika_local_to_global_id(struct topologika_domain const *domain, int64_t vertex_id, int64_t region_id)
 {
 	int64_t corner[] = {
-		region_dims[0]*(region_id%domain->dims[0]),
-		region_dims[1]*(region_id/domain->dims[0]%domain->dims[1]),
-		region_dims[2]*(region_id/(domain->dims[0]*domain->dims[1])),
+		domain->region_dims[0]*(region_id%domain->dims[0]),
+		domain->region_dims[1]*(region_id/domain->dims[0]%domain->dims[1]),
+		domain->region_dims[2]*(region_id/(domain->dims[0]*domain->dims[1])),
 	};
 	int64_t position[] = {
 		corner[0] + (vertex_id%domain->regions[region_id].dims[0]),
@@ -1154,14 +1147,14 @@ topologika_local_to_global_id(struct topologika_domain const *domain, int64_t ve
 }
 
 int64_t
-global_position_to_region_id(int64_t const *dims, int64_t const *global_position)
+global_position_to_region_id(struct topologika_domain const *domain, int64_t const *global_position)
 {
 	int64_t region_position[] = {
-		global_position[0]/region_dims[0],
-		global_position[1]/region_dims[1],
-		global_position[2]/region_dims[2],
+		global_position[0]/domain->region_dims[0],
+		global_position[1]/domain->region_dims[1],
+		global_position[2]/domain->region_dims[2],
 	};
-	return region_position[0] + dims[0]*(region_position[1] + dims[1]*region_position[2]);
+	return region_position[0] + domain->dims[0]*(region_position[1] + domain->dims[1]*region_position[2]);
 }
 
 
@@ -1169,9 +1162,9 @@ topologika_local_t
 global_position_to_local_id(struct topologika_domain const *domain, int64_t region_id, int64_t const *global_position)
 {
 	topologika_local_t local_position[] = {
-		(topologika_local_t)(global_position[0]%region_dims[0]),
-		(topologika_local_t)(global_position[1]%region_dims[1]),
-		(topologika_local_t)(global_position[2]%region_dims[2]),
+		(topologika_local_t)(global_position[0]%domain->region_dims[0]),
+		(topologika_local_t)(global_position[1]%domain->region_dims[1]),
+		(topologika_local_t)(global_position[2]%domain->region_dims[2]),
 	};
 	return (topologika_local_t)(local_position[0] + domain->regions[region_id].dims[0]*(local_position[1] +  domain->regions[region_id].dims[1]*local_position[2]));
 }
@@ -1216,6 +1209,17 @@ sort_reduced_bridge_set(int64_t count, struct vertex *vertices, struct vertex *t
 }
 
 
+int64_t
+topologika_next_power(int64_t n)
+{
+	assert(n >= 0);
+	int64_t next = 1;
+	while (next < n) {
+		next *= 2;
+	}
+	return next;
+}
+
 struct reduced_bridge_set *
 compute_reduced_bridge_set_internal(struct topologika_domain const *domain, int64_t region_id, int64_t neighbor_region_id,
 	int64_t vertex_count, struct vertex *vertices,
@@ -1252,8 +1256,8 @@ compute_reduced_bridge_set_internal(struct topologika_domain const *domain, int6
 	printf("done\n");
 #endif
 
-	// NOTE: conservatively allocate instead of tight capacity using region->dims
-	int64_t const bridge_set_capacity = region_dims[0]*region_dims[1]*8; // TODO: works only for 14 or smaller neighborhood
+	int64_t const max_region_dim = max(domain->region_dims[0], max(domain->region_dims[1], domain->region_dims[2])); // NOTE: or use region's dims domain->regions[region_id].dims
+	int64_t const bridge_set_capacity = max_region_dim*max_region_dim*8; // TODO: works only for 14 or smaller neighborhood
 	uint32_t bridge_set_count = 0;
 	struct bedge *bridge_set = NULL;
 	struct stack_allocation bridge_set_allocation = stack_allocator_alloc(stack_allocator, 8, bridge_set_capacity*sizeof *bridge_set);
@@ -1266,7 +1270,8 @@ compute_reduced_bridge_set_internal(struct topologika_domain const *domain, int6
 	// TODO(2/28/2020): allocate the max of region_dims[0], region_dims[1], region_dims[2] for regions with
 	//	non-uniform aspect radio (e.g., 64x32x32); we could also pass the correct face size from
 	//	the compute_reduced_bridge_set function
-	ds_init(&components, region_dims[0]*region_dims[1]/*vertex_count*/);
+	int64_t count = topologika_next_power(max_region_dim*max_region_dim);
+	ds_init(&components, count/*vertex_count*/);
 
 	// descending
 	topologika_event_begin(events, topologika_event_color_orange, "Sweep");
@@ -1353,7 +1358,7 @@ compute_reduced_bridge_set_internal(struct topologika_domain const *domain, int6
 				edge.global_id/domain->data_dims[0]%domain->data_dims[1],
 				edge.global_id/(domain->data_dims[0]*domain->data_dims[1]),
 			};
-			int64_t v0_region_id = global_position_to_region_id(domain->dims, position);
+			int64_t v0_region_id = global_position_to_region_id(domain, position);
 
 
 			if (v0_region_id == region_id) {
@@ -1430,8 +1435,8 @@ compute_reduced_bridge_set(struct topologika_domain const *domain, int64_t regio
 	};
 
 	struct vertex *vertices = NULL;
-	assert(region_dims[0] == region_dims[1] && region_dims[1] == region_dims[2]);
-	struct stack_allocation vertices_allocation = stack_allocator_alloc(stack_allocator, 8, 2*region_dims[0]*region_dims[1]*sizeof *vertices);
+	int64_t max_region_dim = max(domain->region_dims[0], max(domain->region_dims[1], domain->region_dims[2]));
+	struct stack_allocation vertices_allocation = stack_allocator_alloc(stack_allocator, 8, 2*max_region_dim*max_region_dim*sizeof *vertices);
 	vertices = vertices_allocation.ptr;
 	assert(vertices != NULL);
 	struct reduced_bridge_set *reduced_bridge_sets[neighbor_count] = {0};
@@ -1572,15 +1577,7 @@ compute_region(struct thread_context *context)
 		struct region *region = &context->domain->regions[i];
 
 		topologika_event_begin(context->events, topologika_event_color_green, "Compute MT");
-		enum topologika_result result = 0;
-		// NOTE(1/6/2020): region_dims are constant, so if we inline the compute_merge_tree, the index calculations get simplified
-		//	by the constant propagation compiler optimization if the region's dimensions match (10% time reduction; TODO: is it worth the binary size increase?)
-		// TODO: if we find some other optimization elsewhere, maybe we will not do this one (miranda should run < 10s on my 1950x CPU)
-		if (region_dims[0] == region->dims[0] && region_dims[1] == region->dims[1] && region_dims[2] == region->dims[2]) {
-			result = compute_merge_tree(region, context->stack_allocator, context->events, region_dims, &context->forest->merge_trees[i]);
-		} else {
-			result = compute_merge_tree(region, context->stack_allocator, context->events, region->dims, &context->forest->merge_trees[i]);
-		}
+		enum topologika_result result = compute_merge_tree(region, context->stack_allocator, context->events, region->dims, &context->forest->merge_trees[i]);
 		// TODO(11/26/2019): how to bail from the parallel loop when computation fails
 		assert(result == topologika_result_success);
 		assert(context->stack_allocator->offset == 0);
@@ -1620,7 +1617,7 @@ compute_region(struct thread_context *context)
 
 
 enum topologika_result
-topologika_compute_merge_forest_from_grid(topologika_data_t const *data, int64_t const *data_dims,
+topologika_compute_merge_forest_from_grid(topologika_data_t const *data, int64_t const *data_dims, int64_t const *region_dims,
 	struct topologika_domain **out_domain, struct topologika_merge_forest **out_forest)
 {
 	// TODO: we assume region_id <= 32 bits and vertex_id <= 32 bits
@@ -1649,6 +1646,7 @@ topologika_compute_merge_forest_from_grid(topologika_data_t const *data, int64_t
 	*domain = (struct topologika_domain){
 		.data_dims = {data_dims[0], data_dims[1], data_dims[2]},
 		.dims = {dims[0], dims[1], dims[2]},
+		.region_dims = {region_dims[0], region_dims[1], region_dims[2]},
 	};
 
 	// decompose row-major array into regions
@@ -1712,7 +1710,8 @@ topologika_compute_merge_forest_from_grid(topologika_data_t const *data, int64_t
 	// TODO(9/17/2019): how much memory we need for bedges? (in Vis 2019 paper it was *8 instead of *16, but
 	//	it is not enough on small region resolutions such as 4x4x4)
 	// TODO: more exact formula
-	size_t size = (2*vertex_count*sizeof(struct inlined_vertex_float)) + sizeof (struct bedge)*region_dims[0]*region_dims[1]*16;
+	int64_t max_region_dim = max(region_dims[0], max(region_dims[1], region_dims[2]));
+	size_t size = (2*vertex_count*sizeof(struct inlined_vertex_float)) + sizeof (struct bedge)*max_region_dim*max_region_dim*16;
 	{
 		stack_allocators_memory = calloc(thread_count, size);
 		if (stack_allocators_memory == NULL) {
@@ -1948,7 +1947,7 @@ struct component_max_result {
 };
 
 bool
-topologika_is_above( struct component_max_result v0, struct component_max_result v1)
+topologika_is_above(struct component_max_result v0, struct component_max_result v1)
 {
 	if (v0.value == v1.value) {
 		return (v0.region_index == v1.region_index) ? v0.vertex_index > v1.vertex_index : v0.region_index > v1.region_index;
@@ -2126,8 +2125,11 @@ topologika_query_maxima(struct topologika_domain const *domain, struct topologik
 #if defined(TOPOLOGIKA_DUMP)
 			printf("region_id %d, arc_id %d\n", region_index, arc_index);
 #endif
-
-			topologika_data_t value = domain->regions[region_index].data[arc->max_vertex_id];
+			struct component_max_result leaf = {
+				.value = domain->regions[region_index].data[arc->max_vertex_id],
+				.vertex_index = arc->max_vertex_id,
+				.region_index = (topologika_local_t)region_index,
+			};
 
 			bool has_above_neighbor = false;
 			for (int64_t i = 0; i < merge_tree->reduced_bridge_set_counts[arc_index]; i++) {
@@ -2136,26 +2138,16 @@ topologika_query_maxima(struct topologika_domain const *domain, struct topologik
 #if defined(TOPOLOGIKA_DUMP)
 				printf("\te%d %d\n", edge.local_id, edge.neighbor_local_id);
 #endif
-
 				// TODO: we could sort the bridge set edges per arc to break early (from
 				//	earlier experiments it does not seem worth it; measure again)
 				if (arc->max_vertex_id == edge.local_id) {
-					topologika_data_t neighbor_value = domain->regions[edge.neighbor_region_id].data[edge.neighbor_local_id];
+					struct component_max_result neighbor = {
+						.value = domain->regions[edge.neighbor_region_id].data[edge.neighbor_local_id],
+						.vertex_index = edge.neighbor_local_id,
+						.region_index = edge.neighbor_region_id,
+					};
 
-					// after values compare regions, because the SOS implies that if region_id is greater, than
-					//	all vertices in the region are greater (independent of their ids)
-					// TODO: optimize and hoist into is_above function
-					if (neighbor_value == value) {
-						if (edge.neighbor_region_id == region_index) {
-							if (edge.neighbor_local_id > arc->max_vertex_id) {
-								has_above_neighbor = true;
-								break;
-							}
-						} else if (edge.neighbor_region_id > region_index) {
-							has_above_neighbor = true;
-							break;
-						}
-					} else if (neighbor_value > value) {
+					if (topologika_is_above(neighbor, leaf)) {
 						has_above_neighbor = true;
 						break;
 					}
@@ -2678,14 +2670,14 @@ topologika_global_index_to_vertex(int64_t const *dims, struct topologika_domain 
 		global_vertex_index/(dims[0]*dims[1]),
 	};
 
-	int64_t region_index = (global_position[0]/region_dims[0]) +
-		(global_position[1]/region_dims[1])*domain->dims[0] +
-		(global_position[2]/region_dims[2])*domain->dims[0]*domain->dims[1];
+	int64_t region_index = (global_position[0]/domain->region_dims[0]) +
+		(global_position[1]/domain->region_dims[1])*domain->dims[0] +
+		(global_position[2]/domain->region_dims[2])*domain->dims[0]*domain->dims[1];
 
 	struct region const *region = &domain->regions[region_index];
-	int64_t vertex_index = (global_position[0]%region_dims[0]) +
-		(global_position[1]%region_dims[1])*region->dims[0] +
-		(global_position[2]%region_dims[2])*region->dims[0]*region->dims[1];
+	int64_t vertex_index = (global_position[0]%domain->region_dims[0]) +
+		(global_position[1]%domain->region_dims[1])*region->dims[0] +
+		(global_position[2]%domain->region_dims[2])*region->dims[0]*region->dims[1];
 
 	assert(region_index < TOPOLOGIKA_LOCAL_MAX && vertex_index < TOPOLOGIKA_LOCAL_MAX);
 	return (struct topologika_vertex){
@@ -2700,9 +2692,9 @@ topologika_vertex_to_global_index(int64_t const *dims, struct topologika_domain 
 {
 	struct region const *region = &domain->regions[vertex.region_index];
 	int64_t global_position[] = {
-		vertex.vertex_index%region->dims[0] + (vertex.region_index%domain->dims[0])*region_dims[0],
-		vertex.vertex_index/region->dims[0]%region->dims[1] + (vertex.region_index/domain->dims[0]%domain->dims[1])*region_dims[1],
-		vertex.vertex_index/(region->dims[0]*region->dims[1]) + (vertex.region_index/(domain->dims[0]*domain->dims[1]))*region_dims[2],
+		vertex.vertex_index%region->dims[0] + (vertex.region_index%domain->dims[0])*domain->region_dims[0],
+		vertex.vertex_index/region->dims[0]%region->dims[1] + (vertex.region_index/domain->dims[0]%domain->dims[1])*domain->region_dims[1],
+		vertex.vertex_index/(region->dims[0]*region->dims[1]) + (vertex.region_index/(domain->dims[0]*domain->dims[1]))*domain->region_dims[2],
 	};
 
 	return global_position[0] + global_position[1]*dims[0] + global_position[2]*dims[0]*dims[1];

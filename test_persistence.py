@@ -9,9 +9,8 @@ import unittest
 class TestPersistence1D(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        # TODO(5/3/2020): use region size 2x2x2
         cls.data = np.array([4, 3, 1, 0, 2, 5], dtype=np.float32).reshape(1, 1, 6)
-        cls.forest = topologika.MergeForest(cls.data)
+        cls.forest = topologika.MergeForest(cls.data, region_dims=[2, 2, 2])
 
     def test_maxima_query(self):
         self.assertEqual(set(self.forest.query_maxima()), set([0, 5]))
@@ -33,7 +32,7 @@ class TestPersistence2D(unittest.TestCase):
         #    [0, 6, 1],
         #]], dtype=np.float32)
         cls.data = np.array([10, 5, 11, 0, 6, 1], dtype=np.float32).reshape(1, 2, 3)
-        cls.forest = topologika.MergeForest(cls.data)
+        cls.forest = topologika.MergeForest(cls.data, region_dims=[2, 2, 2])
 
     def test_maxima_query(self):
         self.assertEqual(set(self.forest.query_maxima()), set([0, 2]))
@@ -77,7 +76,7 @@ class TestPersistence3D(unittest.TestCase):
             13, 14, 15,
             12, 26, 16,
             11, 21, 17], dtype=np.float32).reshape(3, 3, 3)
-        cls.forest = topologika.MergeForest(cls.data)
+        cls.forest = topologika.MergeForest(cls.data, region_dims=[2, 2, 2])
 
     def test_maxima_query(self):
         maxima = self.forest.query_maxima()

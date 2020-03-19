@@ -72,17 +72,41 @@ TopologikaMergeForest_new(PyTypeObject *type, PyObject *args, PyObject *kwds)
 }
 
 
+// TODO(3/19/2020): limit the region_dims to power of 2? (then the library can use shifts always for all regions except for incomplete ones if data dimensions are not divisible by region size)
+// TODO(3/19/2020): double check that early returns free memory and decrement reference counts if needed
 static int
 TopologikaMergeForest_init(TopologikaMergeForestObject *self, PyObject *args, PyObject *kwds)
 {
-	PyArrayObject* array = NULL;
-	if (!PyArg_ParseTuple(args, "O!", &PyArray_Type, &array)) {
+	char *kwlist[] = {"array", "region_dims", NULL}; // TODO(3/19/2020): use numpy nomenclature to avoid confusion; also, we may need to use z,y,x order to match numpy's idioms
+	PyArrayObject *array = NULL;
+	PyObject *region_dims_list = NULL;
+	if (!PyArg_ParseTupleAndKeywords(args, kwds, "O!|O", kwlist, &PyArray_Type, &array, &region_dims_list)) {
 		return -1;
 	}
 	if (array == NULL || !PyArray_CHKFLAGS(array, NPY_ARRAY_C_CONTIGUOUS) ||
 		PyArray_TYPE(array) != NPY_FLOAT || PyArray_NDIM(array) != 3) {
 		PyErr_SetString(PyExc_ValueError, "The input array must be 3D, currently it is TODO. For example, numpy.zeros((10, 10, 10)).");
 		return -1;
+	}
+	if (region_dims_list != NULL && PyList_Size(region_dims_list) != PyArray_NDIM(array)) {
+		PyErr_SetString(PyExc_ValueError, "Region dimensions do not match array dimensions."); // TODO(3/19/2020): better message
+		return -1;
+	}
+
+	int64_t region_dims[3] = {64, 64, 64};
+	if (region_dims_list != NULL) {
+		for (int64_t i = 0; i < 3; i++) {
+			if (i < PyList_Size(region_dims_list)) {
+				PyObject *obj = PyList_GetItem(region_dims_list, i);
+				region_dims[i] = PyLong_AsLongLong(obj);
+				if (PyErr_Occurred() != NULL) {
+					PyErr_SetString(PyExc_ValueError, "Region dimensions must be integers");
+					return -1;
+				}
+			} else {
+				region_dims[i] = 1;
+			}
+		}
 	}
 
 	// we use dims[0] as width, dims[1] as height, and dims[2] as depth (which is reverse order
@@ -94,7 +118,7 @@ TopologikaMergeForest_init(TopologikaMergeForestObject *self, PyObject *args, Py
 
 	switch (PyArray_TYPE(array)) {
 	case NPY_FLOAT: {
-		enum topologika_result result = topologika_compute_merge_forest_from_grid(PyArray_DATA(array), self->dims, &self->domain, &self->forest);
+		enum topologika_result result = topologika_compute_merge_forest_from_grid(PyArray_DATA(array), self->dims, region_dims, &self->domain, &self->forest);
 		if (result == topologika_error_out_of_memory) {
 			PyErr_NoMemory(); // TODO: set estimate of needed memory
 			// TODO: decrease ref count for numpy?
