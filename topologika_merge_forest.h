@@ -368,6 +368,12 @@ topologika_run(struct thread_context *contexts, int64_t thread_count, int64_t wo
 #endif
 
 
+static inline int64_t
+topologika_max(int64_t a, int64_t b)
+{
+	return (a > b) ? a : b;
+}
+
 
 // profiling events recording
 enum topologika_event_color {
@@ -1256,7 +1262,7 @@ compute_reduced_bridge_set_internal(struct topologika_domain const *domain, int6
 	printf("done\n");
 #endif
 
-	int64_t const max_region_dim = max(domain->region_dims[0], max(domain->region_dims[1], domain->region_dims[2])); // NOTE: or use region's dims domain->regions[region_id].dims
+	int64_t const max_region_dim = topologika_max(domain->region_dims[0], topologika_max(domain->region_dims[1], domain->region_dims[2])); // NOTE: or use region's dims domain->regions[region_id].dims
 	int64_t const bridge_set_capacity = max_region_dim*max_region_dim*8; // TODO: works only for 14 or smaller neighborhood
 	uint32_t bridge_set_count = 0;
 	struct bedge *bridge_set = NULL;
@@ -1435,7 +1441,7 @@ compute_reduced_bridge_set(struct topologika_domain const *domain, int64_t regio
 	};
 
 	struct vertex *vertices = NULL;
-	int64_t max_region_dim = max(domain->region_dims[0], max(domain->region_dims[1], domain->region_dims[2]));
+	int64_t max_region_dim = topologika_max(domain->region_dims[0], topologika_max(domain->region_dims[1], domain->region_dims[2]));
 	struct stack_allocation vertices_allocation = stack_allocator_alloc(stack_allocator, 8, 2*max_region_dim*max_region_dim*sizeof *vertices);
 	vertices = vertices_allocation.ptr;
 	assert(vertices != NULL);
@@ -1710,7 +1716,7 @@ topologika_compute_merge_forest_from_grid(topologika_data_t const *data, int64_t
 	// TODO(9/17/2019): how much memory we need for bedges? (in Vis 2019 paper it was *8 instead of *16, but
 	//	it is not enough on small region resolutions such as 4x4x4)
 	// TODO: more exact formula
-	int64_t max_region_dim = max(region_dims[0], max(region_dims[1], region_dims[2]));
+	int64_t max_region_dim = topologika_max(region_dims[0], topologika_max(region_dims[1], region_dims[2]));
 	size_t size = (2*vertex_count*sizeof(struct inlined_vertex_float)) + sizeof (struct bedge)*max_region_dim*max_region_dim*16;
 	{
 		stack_allocators_memory = calloc(thread_count, size);
