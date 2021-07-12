@@ -118,7 +118,8 @@ TopologikaMergeForest_init(TopologikaMergeForestObject *self, PyObject *args, Py
 
 	switch (PyArray_TYPE(array)) {
 	case NPY_FLOAT: {
-		enum topologika_result result = topologika_compute_merge_forest_from_grid(PyArray_DATA(array), self->dims, region_dims, &self->domain, &self->forest);
+		double construction_time_sec = 0.0;
+		enum topologika_result result = topologika_compute_merge_forest_from_grid(PyArray_DATA(array), self->dims, region_dims, &self->domain, &self->forest, &construction_time_sec);
 		if (result == topologika_error_out_of_memory) {
 			PyErr_NoMemory(); // TODO: set estimate of needed memory
 			// TODO: decrease ref count for numpy?
@@ -287,6 +288,44 @@ TopologikaMergeForest_query_component(TopologikaMergeForestObject *self, PyObjec
 
 
 static PyObject *
+TopologikaMergeForest_query_triplet(TopologikaMergeForestObject* self, PyObject* args, PyObject* keywds)
+{
+	char *kwlist[] = {"vertex_index", NULL};
+	int64_t global_vertex_index = 0;
+	if (!PyArg_ParseTupleAndKeywords(args, keywds, "L", kwlist, &global_vertex_index)) {
+		return NULL;
+	}
+
+	int64_t vertex_count = self->dims[0]*self->dims[1]*self->dims[2];
+	if (global_vertex_index < 0 || global_vertex_index >= vertex_count) {
+		return PyErr_Format(PyExc_ValueError, "The global index %"PRIi64" lies outside the domain (the range is [0, %"PRIi64"))", global_vertex_index, vertex_count);
+	}
+
+	struct topologika_vertex vertex = topologika_global_index_to_vertex(self->dims, self->domain, global_vertex_index);
+
+	struct topologika_triplet triplet;
+	enum topologika_result result = topologika_query_triplet(self->domain, self->forest, vertex, &triplet);
+	if (result != topologika_result_success) {
+		// TODO
+		return PyErr_Format(PyExc_BaseException, "Triplet query failed.");
+	}
+
+	if (topologika_vertex_eq(triplet.u, triplet.s) && topologika_vertex_eq(triplet.u, triplet.v)) {
+		Py_RETURN_NONE;
+	}
+
+	PyObject *tuple = PyTuple_New(3);
+	PyTuple_SetItem(tuple, 0, PyLong_FromLongLong(topologika_vertex_to_global_index(self->dims, self->domain, triplet.u)));
+	PyTuple_SetItem(tuple, 1, PyLong_FromLongLong(topologika_vertex_to_global_index(self->dims, self->domain, triplet.s)));
+	PyTuple_SetItem(tuple, 2, PyLong_FromLongLong(topologika_vertex_to_global_index(self->dims, self->domain, triplet.v)));
+
+	return tuple;
+}
+
+
+
+
+static PyObject *
 TopologikaMergeForest_query_persistence(TopologikaMergeForestObject* self, PyObject* args, PyObject* keywds)
 {
 	char *kwlist[] = {"vertex_index", NULL};
@@ -315,12 +354,44 @@ TopologikaMergeForest_query_persistence(TopologikaMergeForestObject* self, PyObj
 
 
 
+static PyObject *
+TopologikaMergeForest_query_persistencebelow(TopologikaMergeForestObject* self, PyObject* args, PyObject* keywds)
+{
+	char *kwlist[] = {"vertex_index", "persistence_threshold", NULL};
+	int64_t global_vertex_index = 0;
+	double persistence_threshold = 0.0;
+	if (!PyArg_ParseTupleAndKeywords(args, keywds, "Ld", kwlist, &global_vertex_index, &persistence_threshold)) {
+		return NULL;
+	}
+
+	int64_t vertex_count = self->dims[0]*self->dims[1]*self->dims[2];
+	if (global_vertex_index < 0 || global_vertex_index >= vertex_count) {
+		return PyErr_Format(PyExc_ValueError, "The global index %"PRIi64" lies outside the domain (the range is [0, %"PRIi64"))", global_vertex_index, vertex_count);
+	}
+
+	struct topologika_vertex vertex = topologika_global_index_to_vertex(self->dims, self->domain, global_vertex_index);
+
+	double persistence = 0.0f;
+	enum topologika_result result = topologika_query_persistencebelow(self->domain, self->forest, vertex, persistence_threshold, &persistence);
+	if (result != topologika_result_success) {
+		// TODO
+		return PyErr_Format(PyExc_BaseException, "Persistencebelow query failed.");
+	}
+
+	return PyFloat_FromDouble(persistence);
+}
+
+
+
+
 static PyMethodDef TopologikeMergeForest_methods[] = {
 	{"query_component_max", (PyCFunction)TopologikaMergeForest_query_component_max, METH_VARARGS | METH_KEYWORDS, "Given a vertex and threshold return the highest vertex in a connected component containing the vertex at the specified threshold."},
 	{"query_component", (PyCFunction)TopologikaMergeForest_query_component, METH_VARARGS | METH_KEYWORDS, "Given a vertex and threshold return the connected component containing the vertex."},
 	{"query_components", (PyCFunction)TopologikaMergeForest_query_components, METH_VARARGS | METH_KEYWORDS, "Return vertices of all connected components at the given threshold."},
 	{"query_maxima", (PyCFunction)TopologikaMergeForest_query_maxima, METH_NOARGS, "Returns all maxima in the data set."},
+	{"query_triplet", (PyCFunction)TopologikaMergeForest_query_triplet, METH_VARARGS | METH_KEYWORDS, "Given a maximum return its triplet."},
 	{"query_persistence", (PyCFunction)TopologikaMergeForest_query_persistence, METH_VARARGS | METH_KEYWORDS, "Given a maximum return its persistence."},
+	{"query_persistencebelow", (PyCFunction)TopologikaMergeForest_query_persistencebelow, METH_VARARGS | METH_KEYWORDS, "Given a maximum and persistence threshold return its persistence if below the threshold, otherwise return infinity."},
 	{NULL},
 };
 

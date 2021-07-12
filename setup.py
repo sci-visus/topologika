@@ -9,11 +9,11 @@ class GetNumpyInclude(object):
 
 
 if platform.system() == 'Windows':
-    compile_args = []
+    compile_args = ['/openmp']
     link_args = []
 elif platform.system() == 'Linux':
-    compile_args = ['-std=c99']
-    link_args = []
+    compile_args = ['-std=c99', '-fopenmp']
+    link_args = ['-fopenmp']
 elif platform.system() == 'Darwin':
     compile_args = ['-std=c99']
     link_args = []

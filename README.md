@@ -1,3 +1,7 @@
+TODO:
+- do not support check if triplet, persistence, and persistencebelow input is a maximum
+- implement the reference using the sweep algorithm for better performance (especially for triplets and persistence)
+
 Topological analysis based on localized data structures.
 
 
