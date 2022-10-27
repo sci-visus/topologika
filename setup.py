@@ -14,11 +14,8 @@ if platform.system() == 'Windows':
 elif platform.system() == 'Linux':
     compile_args = ['-std=c99', '-fopenmp']
     link_args = ['-fopenmp']
-elif platform.system() == 'Darwin':
-    compile_args = ['-std=c99']
-    link_args = []
 else:
-    raise Exception('Only Windows, Linux, and Mac is supported')
+    raise Exception('Only Windows and Linux is supported')
 
 module = setuptools.Extension(
     'topologika',
@@ -30,11 +27,11 @@ module = setuptools.Extension(
 
 setuptools.setup(
     name='topologika',
-    version='2020.6',
+    version='2022.10',
     author='Pavol Klacansky',
     author_email='klacansky@sci.utah.edu',
     description='Localized topological data analysis',
-    url='https://github.com/pavolklacansky/topologika',
+    url='https://github.com/klacansky/topologika',
     packages=setuptools.find_packages(),
     python_requires='>=3.6',
     ext_modules=[module],
