@@ -25,9 +25,6 @@
 #define TOPOLOGIKA_MERGE_FOREST_IMPLEMENTATION
 #include "topologika_merge_forest.h"
 
-#include "topologika_merge_forest_reference.h"
-
-
 // component object
 typedef struct {
 	PyObject_HEAD
@@ -709,176 +706,6 @@ static PyTypeObject TopologikaMergeForest1Type = {
 
 
 
-// merge forest version that accepts 3D grid and works directly with 3D coordinates
-/*
-typedef struct {
-	PyObject_HEAD
-	struct topologika_domain *domain;
-	struct topologika_merge_forest2 *forest;
-	int64_t dims[3];
-} TopologikaMergeForest2Object;
-
-
-
-static void
-TopologikaMergeForest2_dealloc(TopologikaMergeForest2Object *self)
-{
-	if (self->domain == NULL && self->forest == NULL) {
-		Py_TYPE(self)->tp_free((PyObject *)self);
-		return;
-	}
-
-	for (int64_t i = 0; i < self->forest->merge_tree_count; i++) {
-		free(self->domain->regions[i].data);
-
-		free(self->forest->merge_trees[i].arcs);
-		free(self->forest->merge_trees[i].segmentation_offsets);
-		free(self->forest->merge_trees[i].segmentation_counts);
-		free(self->forest->merge_trees[i].segmentation);
-		free(self->forest->merge_trees[i].vertex_to_arc);
-		free(self->forest->merge_trees[i].reduced_bridge_set);
-		free(self->forest->merge_trees[i].reduced_bridge_set_offsets);
-		free(self->forest->merge_trees[i].reduced_bridge_set_counts);
-	}
-	free(self->domain);
-	free(self->forest);
-	Py_TYPE(self)->tp_free((PyObject *)self);
-}
-
-
-static PyObject*
-TopologikaMergeForest2_new(PyTypeObject *type, PyObject *args, PyObject *kwds)
-{
-	TopologikaMergeForest2Object *self = (TopologikaMergeForest2Object *)type->tp_alloc(type, 0);
-	if (self == NULL) {
-		return (PyObject *)self;
-	}
-
-	self->domain = NULL;
-	self->forest = NULL;
-
-	return (PyObject *)self;
-}
-
-
-// TODO(3/19/2020): limit the region_dims to power of 2? (then the library can use shifts always for all regions except for incomplete ones if data dimensions are not divisible by region size)
-// TODO(3/19/2020): double check that early returns free memory and decrement reference counts if needed
-static int
-TopologikaMergeForest2_init(TopologikaMergeForest2Object *self, PyObject *args, PyObject *kwds)
-{
-	char *kwlist[] = {"array", "region_shape", NULL};
-	PyArrayObject *array = NULL;
-	PyObject *region_dims_list = NULL;
-	if (!PyArg_ParseTupleAndKeywords(args, kwds, "O!|O", kwlist, &PyArray_Type, &array, &region_dims_list)) {
-		return -1;
-	}
-
-	if (PyArray_TYPE(array) != NPY_FLOAT32) {
-		PyErr_SetString(PyExc_ValueError, "The input NumPy array needs to have float32 type.");
-		return -1;
-	}
-	if (PyArray_NDIM(array) != 3) {
-		PyErr_Format(PyExc_ValueError, "The input NumPy array needs to be 3 dimensional. The passed array has %d dimensions.", PyArray_NDIM(array));
-		return -1;
-	}
-	if (!PyArray_CHKFLAGS(array, NPY_ARRAY_C_CONTIGUOUS)) {
-		PyErr_SetString(PyExc_ValueError, "The input NumPy array needs to be C contiguous.");
-		return -1;
-	}
-	if (region_dims_list != NULL && PyList_Size(region_dims_list) != PyArray_NDIM(array)) {
-		PyErr_Format(PyExc_ValueError, "Region dimensions (%d) do not match array dimensions (%d).", PyList_Size(region_dims_list), PyArray_NDIM(array));
-		return -1;
-	}
-
-	int64_t region_shape[3] = {64, 64, 64};
-	if (region_dims_list != NULL) {
-		for (int64_t i = 0; i < 3; i++) {
-			if (i < PyList_Size(region_dims_list)) {
-				PyObject *obj = PyList_GetItem(region_dims_list, i);
-				if (!PyLong_Check(obj)) {
-					PyErr_SetString(PyExc_TypeError, "Region shape needs to be integers");
-					return -1;
-				}
-				region_shape[i] = PyLong_AsLongLong(obj);
-				if (PyErr_Occurred() != NULL) {
-					PyErr_SetString(PyExc_ValueError, "TODO");
-					return -1;
-				}
-			} else {
-				region_shape[i] = 1;
-			}
-		}
-	}
-
-	if (region_shape[0] < 1 || region_shape[1] < 1 || region_shape[2] < 1) {
-		PyErr_SetString(PyExc_ValueError, "Region shape must be positive");
-		return -1;
-	}
-
-	int64_t region_dims[] = {region_shape[2], region_shape[1], region_shape[0]}; // TODO: use region_shape in topologika too
-
-	if (region_dims[0]*region_dims[1]*region_dims[2] >= TOPOLOGIKA_LOCAL_MAX) {
-		assert(1024*1024*1024 < TOPOLOGIKA_LOCAL_MAX);
-		PyErr_SetString(PyExc_ValueError, "Region shape is larger than the local index can represent. Maximum region shape is (1024, 1024, 1024).");
-		return -1;
-	}
-
-	// we use dims[0] as width, dims[1] as height, and dims[2] as depth (which is reverse order
-	//	than that of a numpy array
-	// TODO(2/27/2020): should we switch to numpy's way of representing the dimensions of a 3D matrix?
-	if (PyArray_NDIM(array) == 1) {
-		self->dims[0] = PyArray_DIM(array, 0);
-		self->dims[1] = 1;
-		self->dims[2] = 1;
-	} else if (PyArray_NDIM(array) == 2) {
-		self->dims[0] = PyArray_DIM(array, 1);
-		self->dims[1] = PyArray_DIM(array, 0);
-		self->dims[2] = 1;
-	} else {
-		self->dims[0] = PyArray_DIM(array, 2);
-		self->dims[1] = PyArray_DIM(array, 1);
-		self->dims[2] = PyArray_DIM(array, 0);
-	}
-
-	switch (PyArray_TYPE(array)) {
-	case NPY_FLOAT: {
-		double construction_time_sec = 0.0;
-		enum topologika_result result = topologika_compute_merge_forest_from_grid2(PyArray_DATA(array), self->dims, region_dims, &self->domain, &self->forest, &construction_time_sec);
-		if (result == topologika_error_out_of_memory) {
-			PyErr_NoMemory(); // TODO: set estimate of needed memory
-			return -1;
-		}
-		break;
-	}
-	default:
-		return -1;
-	}
-
-	return 0;
-}
-
-static PyTypeObject TopologikaMergeForest2Type = {
-	PyVarObject_HEAD_INIT(NULL, 0)
-	.tp_name = "topologika.MergeForest2",
-	.tp_doc = "Merge forest that uses 3D coordinates representation",
-	.tp_basicsize = sizeof (TopologikaMergeForest2Object),
-	.tp_itemsize = 0,
-	.tp_flags = Py_TPFLAGS_DEFAULT,
-	.tp_new = TopologikaMergeForest2_new,
-	.tp_init = (initproc)TopologikaMergeForest2_init,
-	.tp_dealloc = (destructor)TopologikaMergeForest2_dealloc,
-};
-*/
-
-
-
-
-
-
-
-
-
-
 
 static PyObject *
 query_maxima(PyObject  *self, PyObject *arg)
@@ -910,30 +737,6 @@ query_maxima(PyObject  *self, PyObject *arg)
 		free(maxima);
 
 		return maxima_list;
-	} else if (PyObject_TypeCheck(arg, &PyArray_Type)) {
-		PyArrayObject *array = (PyArrayObject *)arg;
-
-		if (PyArray_TYPE(array) != NPY_FLOAT32) {
-			return PyErr_Format(PyExc_ValueError, "The input NumPy array needs to have float32 type.");
-		}
-		if (PyArray_NDIM(array) != 3) {
-			return PyErr_Format(PyExc_ValueError, "The input NumPy array needs to be 3 dimensional. The passed array has %d dimensions.", PyArray_NDIM(array));
-		}
-		if (!PyArray_CHKFLAGS(array, NPY_ARRAY_C_CONTIGUOUS)) {
-			return PyErr_Format(PyExc_ValueError, "The input NumPy array needs to be C contiguous.");
-		}
-
-		int64_t *maxima = NULL;
-		int64_t maximum_count = 0;
-		{
-			int64_t dims[] = {PyArray_DIM(array, 2), PyArray_DIM(array, 1), PyArray_DIM(array, 0)};
-			topologika_reference_query_maxima(PyArray_DATA(array), dims, &maxima, &maximum_count);
-		}
-
-		npy_intp dims[] = {maximum_count};
-		PyObject *result = PyArray_SimpleNewFromData(1, dims, NPY_INT64, maxima);
-		PyArray_ENABLEFLAGS((PyArrayObject *)result, NPY_ARRAY_OWNDATA);
-		return result;
 	}
 
 	return PyErr_Format(PyExc_TypeError, "Expect MergeForest type or ndarray.");
@@ -1046,31 +849,6 @@ query_component(PyObject *self, PyObject *args, PyObject *keywds)
 		free(component);
 
 		return tuple;
-	} else if (PyObject_TypeCheck(arg, &PyArray_Type)) {
-		PyArrayObject *array = (PyArrayObject *)arg;
-
-		if (PyArray_TYPE(array) != NPY_FLOAT32) {
-			return PyErr_Format(PyExc_ValueError, "The input NumPy array needs to have float32 type.");
-		}
-		if (PyArray_NDIM(array) != 3) {
-			return PyErr_Format(PyExc_ValueError, "The input NumPy array needs to be 3 dimensional. The passed array has %d dimensions.", PyArray_NDIM(array));
-		}
-		if (!PyArray_CHKFLAGS(array, NPY_ARRAY_C_CONTIGUOUS)) {
-			return PyErr_Format(PyExc_ValueError, "The input NumPy array needs to be C contiguous.");
-		}
-
-		int64_t *vertices = NULL;
-		int64_t vertex_count = 0;
-		{
-			int64_t dims[] = {PyArray_DIM(array, 2), PyArray_DIM(array, 1), PyArray_DIM(array, 0)};
-			int64_t global_vertex_index = coordinates[0] + coordinates[1]*dims[0] + coordinates[2]*dims[0]*dims[1];
-			topologika_reference_query_component(PyArray_DATA(array), dims, global_vertex_index, threshold, &vertices, &vertex_count);
-		}
-
-		npy_intp dims[] = {vertex_count};
-		PyObject *result = PyArray_SimpleNewFromData(1, dims, NPY_INT64, vertices);
-		PyArray_ENABLEFLAGS((PyArrayObject *)result, NPY_ARRAY_OWNDATA);
-		return result;
 	}
 
 	return PyErr_Format(PyExc_TypeError, "Expect MergeForest or ndarray");
@@ -1113,13 +891,6 @@ query_components(PyObject *self, PyObject *args, PyObject *keywds)
 			npy_intp dims[] = {(npy_intp)component->count};
 			PyObject *list = PyArray_SimpleNew(1, dims, NPY_INT64);
 			PyList_SetItem(components_list, i, list);
-			/*
-			for (int64_t j = 0; j < component->count; j++) {
-				int64_t global_vertex_index = 0;
-				//int64_t global_vertex_index = topologika_vertex_to_global_index(object->dims, object->domain, component->data[j]);
-				*((int64_t *)PyArray_GETPTR1(list, j)) = global_vertex_index;
-			}
-			*/
 
 			topologika_vertices_to_global_indices(object->dims, object->domain, component->data, component->count, (int64_t *)PyArray_GETPTR1(list, 0));
 
@@ -1310,14 +1081,9 @@ query_components_parallel(TopologikaMergeForestObject *self, PyObject *args, PyO
 		for (int64_t i = 0; i < component_count; i++) {
 			struct topologika_component *component = components[i];
 
-			//PyObject *list = PyList_New(component->count);
 			PyObject *tmp = PyObject_CallObject((PyObject *)&TopologikaComponentType, NULL);
 			((TopologikaComponentObject *)tmp)->count = component->count;
 			PyList_SetItem(components_list, i, tmp);
-			/*for (int64_t j = 0; j < component->count; j++) {
-			int64_t global_vertex_index = topologika_vertex_to_global_index(object->dims, object->domain, component->data[j]);
-			PyList_SetItem(list, j, PyLong_FromLongLong(global_vertex_index));
-			}*/
 
 			free(component);
 		}
@@ -1399,13 +1165,6 @@ query_triplet(PyObject* self, PyObject* args, PyObject* keywds)
 	if (topologika_vertex_eq(triplet.u, triplet.s) && topologika_vertex_eq(triplet.u, triplet.v)) {
 		Py_RETURN_NONE;
 	}
-
-	/*
-	PyObject *tuple = PyTuple_New(3);
-	PyTuple_SetItem(tuple, 0, PyLong_FromLongLong(topologika_vertex_to_global_index(object->dims, object->domain, triplet.u)));
-	PyTuple_SetItem(tuple, 1, PyLong_FromLongLong(topologika_vertex_to_global_index(object->dims, object->domain, triplet.s)));
-	PyTuple_SetItem(tuple, 2, PyLong_FromLongLong(topologika_vertex_to_global_index(object->dims, object->domain, triplet.v)));
-	*/
 
 	int64_t global_u_vertex_index = topologika_vertex_to_global_index(object->dims, object->domain, triplet.u);
 	int64_t u_coordinates[3] = {
