@@ -22,6 +22,8 @@ class TestAPI(unittest.TestCase):
             forest = ta.MergeForest(np.random.rand(128, 128, 128).astype(np.float32), ['hello', 32, 32])
         with self.assertRaises(ValueError):
             forest = ta.MergeForest(np.random.rand(128, 128, 128).astype(np.float32), [-1, -2, -3])
+        with self.assertRaises(ValueError):
+            forest = ta.MergeForest(np.random.rand(128, 128, 128).astype(np.uint8))
         forest = ta.MergeForest(array=np.random.rand(128, 128, 128).astype(np.float32))
         forest = ta.MergeForest(array=np.random.rand(128, 128, 128).astype(np.float32), region_shape=[32, 32, 32])
 
@@ -70,24 +72,6 @@ class TestAPI(unittest.TestCase):
         self.assertEqual(ta.components(forest, float('inf')), [])
         with self.assertRaises(TypeError):
             ta.components()
-
-
-
-class TestConstructor(unittest.TestCase):
-    def test_unsupported_dtype(self):
-        filepath = r'fuel_64x64x64_uint8.raw'
-        data = np.fromfile(filepath, dtype=np.uint8).reshape((64, 64, 64))
-        with self.assertRaises(ValueError):
-            ta.MergeForest(data)
-
-    def test_dimension(self):
-        with self.assertRaises(ValueError):
-            ta.MergeForest(np.zeros((10,), dtype=np.float32))
-        with self.assertRaises(ValueError):
-            ta.MergeForest(np.zeros((10, 10), dtype=np.float32))
-        ta.MergeForest(np.zeros((10, 10, 10), dtype=np.float32))
-        with self.assertRaises(ValueError):
-            ta.MergeForest(np.zeros((10, 10, 10, 10), dtype=np.float32))
 
 
 
