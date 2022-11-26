@@ -9,8 +9,8 @@ jobs:
     strategy:
       max-parallel: 8
       matrix:
-        os: [windows-latest, ubuntu-18.04, ubuntu-latest]
-        python-version: [3.6, 3.7, 3.8, 3.9]
+        os: [windows-latest, ubuntu-22.04, ubuntu-latest]
+        python-version: [3.7, 3.8, 3.9, 3.10, 3.11]
 
     steps:
     - uses: actions/checkout@v1
@@ -25,13 +25,6 @@ jobs:
       run: |
         python setup.py build
         python setup.py install
-    - name: Build reference package
-      working-directory: ./reference
-      run: |
-        python setup.py build
-        python setup.py install
     - name: Test
       run: |
-        python -m unittest test_random.py
-        python -m unittest test_persistence.py
-        python -m unittest test_triplet.py
+        python -m unittest test.py

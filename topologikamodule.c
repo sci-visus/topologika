@@ -150,7 +150,7 @@ TopologikaMergeForest_init(TopologikaMergeForestObject *self, PyObject *args, Py
 	}
 
 	if (PyArray_TYPE(array) != NPY_FLOAT32) {
-		PyErr_SetString(PyExc_ValueError, "The input NumPy array needs to have float32 type.");
+		PyErr_SetString(PyExc_ValueError, "The input NumPy array needs to have float32 type. An array can be converted by using array.astype(np.float32).");
 		return -1;
 	}
 	if (PyArray_NDIM(array) > 3) {
@@ -612,7 +612,7 @@ TopologikaMergeForest1_init(TopologikaMergeForest1Object *self, PyObject *args, 
 	}
 
 	if (PyArray_TYPE(array) != NPY_FLOAT32) {
-		PyErr_SetString(PyExc_ValueError, "The input NumPy array needs to have float32 type.");
+		PyErr_SetString(PyExc_ValueError, "The input NumPy array needs to have float32 type. An array can be converted by using array.astype(np.float32).");
 		return -1;
 	}
 	if (PyArray_NDIM(array) != 3) {
@@ -947,18 +947,11 @@ query_componentmax(TopologikaMergeForestObject *self, PyObject *args, PyObject *
 {
 	char *kwlist[] = {"", "vertex", "threshold", NULL};
 	PyObject *arg = NULL;
-	PyTupleObject *vertex = NULL;
+	int64_t coordinates[3] = {0};
 	double threshold = 0.0;
-	if (!PyArg_ParseTupleAndKeywords(args, keywds, "OO!d", kwlist, &arg, &PyTuple_Type, &vertex, &threshold)) {
+	if (!PyArg_ParseTupleAndKeywords(args, keywds, "O(LLL)d", kwlist, &arg, &coordinates[2], &coordinates[1], &coordinates[0], &threshold)) {
 		return NULL;
 	}
-
-	// TODO: check tuple contains integer
-	int64_t coordinates[3] = {
-		PyLong_AsLongLong(PyTuple_GetItem(vertex, 2)),
-		PyLong_AsLongLong(PyTuple_GetItem(vertex, 1)),
-		PyLong_AsLongLong(PyTuple_GetItem(vertex, 0)),
-	};
 
 	if (PyObject_TypeCheck(arg, &TopologikaMergeForest1Type)) {
 		TopologikaMergeForest1Object *object = (TopologikaMergeForest1Object *)arg;
@@ -1006,18 +999,11 @@ query_component(PyObject *self, PyObject *args, PyObject *keywds)
 {
 	char *kwlist[] = {"", "vertex", "threshold", NULL};
 	PyObject *arg = NULL;
-	PyObject *vertex = NULL;
+	int64_t coordinates[3] = {0};
 	double threshold = 0.0;
-	if (!PyArg_ParseTupleAndKeywords(args, keywds, "OO!d", kwlist, &arg, &PyTuple_Type, &vertex, &threshold)) {
+	if (!PyArg_ParseTupleAndKeywords(args, keywds, "O(LLL)d", kwlist, &arg, &coordinates[2], &coordinates[1], &coordinates[0], &threshold)) {
 		return NULL;
 	}
-
-	// TODO: check tuple contains integer
-	int64_t coordinates[3] = {
-		PyLong_AsLongLong(PyTuple_GetItem(vertex, 2)),
-		PyLong_AsLongLong(PyTuple_GetItem(vertex, 1)),
-		PyLong_AsLongLong(PyTuple_GetItem(vertex, 0)),
-	};
 
 	if (PyObject_TypeCheck(arg, &TopologikaMergeForest1Type)) {
 		TopologikaMergeForest1Object *object = (TopologikaMergeForest1Object *)arg;
@@ -1359,17 +1345,10 @@ query_persistence(PyObject* self, PyObject* args, PyObject* keywds)
 
 	char *kwlist[] = {"", "vertex", NULL};
 	TopologikaMergeForest1Object *object = NULL;
-	PyObject *vertex = NULL;
-	if (!PyArg_ParseTupleAndKeywords(args, keywds, "O!O!", kwlist, &TopologikaMergeForest1Type, &object, &PyTuple_Type, &vertex)) {
+	int64_t coordinates[3] = {0};
+	if (!PyArg_ParseTupleAndKeywords(args, keywds, "O!(LLL)", kwlist, &TopologikaMergeForest1Type, &object, &coordinates[2], &coordinates[1], &coordinates[0])) {
 		return NULL;
 	}
-
-	// TODO: check tuple contains integer
-	int64_t coordinates[3] = {
-		PyLong_AsLongLong(PyTuple_GetItem(vertex, 2)),
-		PyLong_AsLongLong(PyTuple_GetItem(vertex, 1)),
-		PyLong_AsLongLong(PyTuple_GetItem(vertex, 0)),
-	};
 
 	// TODO: probably forest query itself should do this check
 	if (coordinates[0] < 0 || coordinates[0] >= object->dims[0] || coordinates[1] < 0 || coordinates[1] >= object->dims[1] || coordinates[2] < 0 || coordinates[2] >= object->dims[2]) {
@@ -1396,17 +1375,10 @@ query_triplet(PyObject* self, PyObject* args, PyObject* keywds)
 {
 	char *kwlist[] = {"", "vertex", NULL};
 	TopologikaMergeForest1Object *object = NULL;
-	PyObject *vertex = NULL;
-	if (!PyArg_ParseTupleAndKeywords(args, keywds, "O!O!", kwlist, &TopologikaMergeForest1Type, &object, &PyTuple_Type, &vertex)) {
+	int64_t coordinates[3] = {0};
+	if (!PyArg_ParseTupleAndKeywords(args, keywds, "O!(LLL)", kwlist, &TopologikaMergeForest1Type, &object, &coordinates[2], &coordinates[1], &coordinates[0])) {
 		return NULL;
 	}
-
-	// TODO: check tuple contains integer
-	int64_t coordinates[3] = {
-		PyLong_AsLongLong(PyTuple_GetItem(vertex, 2)),
-		PyLong_AsLongLong(PyTuple_GetItem(vertex, 1)),
-		PyLong_AsLongLong(PyTuple_GetItem(vertex, 0)),
-	};
 
 	// TODO: probably forest query itself should do this check
 	if (coordinates[0] < 0 || coordinates[0] >= object->dims[0] || coordinates[1] < 0 || coordinates[1] >= object->dims[1] || coordinates[2] < 0 || coordinates[2] >= object->dims[2]) {

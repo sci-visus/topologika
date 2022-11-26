@@ -1,0 +1,16 @@
+.vs
+build
+__pycache__
+dist
+notebooks/.ipynb_checkpoints
+topologika.egg-info
+*pdb
+papers
+examples
+codes
+datasets
+reference
+*docx
+*sln
+*vcxproj*
+*raw

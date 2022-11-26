@@ -4470,13 +4470,13 @@ topologika_vertices_to_global_coordinates16(int64_t const *dims, struct topologi
 		struct topologika_vertex vertex = vertices[i];
 		struct region const *region = &domain->regions[vertex.region_index];
 		if (region->dims[0] == 64 && region->dims[1] == 64 && region->dims[2] == 64) {
-			xs[i] = vertex.vertex_index%region->dims[0] + (vertex.region_index%domain->dims[0])*domain->region_dims[0];
-			ys[i] = vertex.vertex_index/region->dims[0]%region->dims[1] + (vertex.region_index/domain->dims[0]%domain->dims[1])*domain->region_dims[1];
-			zs[i] = vertex.vertex_index/(region->dims[0]*region->dims[1]) + (vertex.region_index/(domain->dims[0]*domain->dims[1]))*domain->region_dims[2];
+			xs[i] = (int16_t)(vertex.vertex_index%region->dims[0] + (vertex.region_index%domain->dims[0])*domain->region_dims[0]);
+			ys[i] = (int16_t)(vertex.vertex_index/region->dims[0]%region->dims[1] + (vertex.region_index/domain->dims[0]%domain->dims[1])*domain->region_dims[1]);
+			zs[i] = (int16_t)(vertex.vertex_index/(region->dims[0]*region->dims[1]) + (vertex.region_index/(domain->dims[0]*domain->dims[1]))*domain->region_dims[2]);
 		} else {
-			xs[i] = vertex.vertex_index%region->dims[0] + (vertex.region_index%domain->dims[0])*domain->region_dims[0];
-			ys[i] = vertex.vertex_index/region->dims[0]%region->dims[1] + (vertex.region_index/domain->dims[0]%domain->dims[1])*domain->region_dims[1];
-			zs[i] = vertex.vertex_index/(region->dims[0]*region->dims[1]) + (vertex.region_index/(domain->dims[0]*domain->dims[1]))*domain->region_dims[2];
+			xs[i] = (int16_t)(vertex.vertex_index%region->dims[0] + (vertex.region_index%domain->dims[0])*domain->region_dims[0]);
+			ys[i] = (int16_t)(vertex.vertex_index/region->dims[0]%region->dims[1] + (vertex.region_index/domain->dims[0]%domain->dims[1])*domain->region_dims[1]);
+			zs[i] = (int16_t)(vertex.vertex_index/(region->dims[0]*region->dims[1]) + (vertex.region_index/(domain->dims[0]*domain->dims[1]))*domain->region_dims[2]);
 		}
 	}
 }
