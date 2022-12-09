@@ -27,13 +27,13 @@ module = setuptools.Extension(
 
 setuptools.setup(
     name='topologika',
-    version='2022.10',
+    version='2022.12',
     author='Pavol Klacansky',
-    author_email='klacansky@sci.utah.edu',
+    author_email='pavol@klacansky.com',
     description='Localized topological data analysis',
-    url='https://github.com/klacansky/topologika',
+    url='https://github.com/sci-visus/topologika',
     packages=setuptools.find_packages(),
-    python_requires='>=3.6',
+    python_requires='>=3.11',
     ext_modules=[module],
     setup_requires=['numpy>=1.13'],
     install_requires=['numpy>=1.13'],
